@@ -1,0 +1,28 @@
+\documentclass{article}
+\usepackage{graphicx}
+
+\begin{document}
+
+\title{Test Document}
+\maketitle
+
+% This comment should be removed
+\input{chapters/intro}
+
+\include{chapters/methods}
+
+See Figure~\ref{fig:result} for results.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.8\textwidth]{figs/result.png}
+\caption{Main results}
+\label{fig:result}
+\end{figure}
+
+As shown by \cite{smith2020} and \citep{doe2021}.
+
+\bibliographystyle{plain}
+\bibliography{refs}
+
+\end{document}

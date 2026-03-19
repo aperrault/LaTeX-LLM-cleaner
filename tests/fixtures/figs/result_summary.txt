@@ -1,0 +1,1 @@
+A bar chart comparing method A and method B across four metrics, showing method A outperforms on three of four.

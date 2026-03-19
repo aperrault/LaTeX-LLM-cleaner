@@ -5,6 +5,12 @@ A Python CLI tool that takes a LaTeX `.tex` file and produces a flattened, clean
 ## Installation
 
 ```bash
+pip install latex-llm-cleaner
+```
+
+Or from source:
+
+```bash
 pip install .
 # or for development:
 pip install -e ".[dev]"

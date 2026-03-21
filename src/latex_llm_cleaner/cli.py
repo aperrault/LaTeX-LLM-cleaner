@@ -20,7 +20,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-flatten", action="store_true", help="Disable include/input flattening"
     )
     parser.add_argument(
-        "--no-bibliography", action="store_true", help="Disable bibliography inlining"
+        "--no-bibliography",
+        action="store_true",
+        help="Disable bibliography inlining (supports .bbl and .bib files)",
     )
     parser.add_argument(
         "--no-comments", action="store_true", help="Disable comment removal"

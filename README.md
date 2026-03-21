@@ -46,7 +46,7 @@ The four steps run in this order (each operates on the output of the previous st
 
 1. **Flatten includes** — inline `\input{}`, `\include{}`, and `\subfile{}` recursively, with cycle detection
 2. **Remove comments** — strip `%` comments while respecting `\%` escapes and verbatim environments
-3. **Inline bibliography** — parse `.bib` files and replace `\bibliography{}` with a `\begin{thebibliography}` block containing only cited entries
+3. **Inline bibliography** — use a pre-compiled `.bbl` file if available (common in arXiv downloads), otherwise parse `.bib` files; replaces `\bibliography{}` with a `\begin{thebibliography}` block
 4. **Figure summary substitution** — replace `\includegraphics` with text descriptions when summary files are available
 
 ## Figure Summaries

@@ -25,12 +25,23 @@ def inline_bibliography(content: str, base_dir: Path, options: dict) -> str:
     verbose = options.get("verbose", False)
     encoding = options.get("encoding", "utf-8")
 
-    # Find bib file references
+    # Check if there are any bibliography commands to process
+    has_bib_cmd = _BIBLIOGRAPHY_RE.search(content) or _ADDBIBRESOURCE_RE.search(content)
+    if not has_bib_cmd:
+        return content
+
+    # Try .bbl file first (common in arXiv downloads)
+    bbl_block = _try_bbl_file(content, base_dir, options)
+    if bbl_block is not None:
+        if verbose:
+            print("  Using pre-compiled .bbl file", file=sys.stderr)
+        return _replace_bib_commands(content, bbl_block)
+
+    # Fall back to .bib file parsing
     bib_files = _find_bib_files(content, base_dir)
     if not bib_files:
         return content
 
-    # Parse all bib entries
     all_entries = {}
     for bib_path in bib_files:
         if not bib_path.is_file():
@@ -68,10 +79,12 @@ def inline_bibliography(content: str, base_dir: Path, options: dict) -> str:
     if not ordered_keys:
         return content
 
-    # Generate \thebibliography block
     bib_block = _generate_thebibliography(ordered_keys, all_entries)
+    return _replace_bib_commands(content, bib_block)
 
-    # Replace \bibliography{...} or \addbibresource{...} with the block
+
+def _replace_bib_commands(content: str, bib_block: str) -> str:
+    """Replace \\bibliography/\\addbibresource commands with bib_block and remove \\bibliographystyle."""
     replaced = False
 
     def replace_bib_cmd(m: re.Match) -> str:
@@ -83,11 +96,31 @@ def inline_bibliography(content: str, base_dir: Path, options: dict) -> str:
 
     content = _BIBLIOGRAPHY_RE.sub(replace_bib_cmd, content)
     content = _ADDBIBRESOURCE_RE.sub(replace_bib_cmd, content)
-
-    # Remove \bibliographystyle
     content = _BIBSTYLE_RE.sub("", content)
-
     return content
+
+
+def _try_bbl_file(content: str, base_dir: Path, options: dict) -> str | None:
+    """Look for a .bbl file and return its contents if found."""
+    encoding = options.get("encoding", "utf-8")
+    candidates: list[Path] = []
+
+    # Try <input_file_stem>.bbl (e.g., main.tex → main.bbl)
+    input_file = options.get("input_file")
+    if input_file is not None:
+        candidates.append(Path(input_file).with_suffix(".bbl"))
+
+    # Try <bib_name>.bbl from \bibliography{name}
+    for m in _BIBLIOGRAPHY_RE.finditer(content):
+        for name in m.group(1).split(","):
+            name = name.strip()
+            candidates.append(base_dir / (name + ".bbl"))
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.read_text(encoding=encoding).strip()
+
+    return None
 
 
 def _find_bib_files(content: str, base_dir: Path) -> list[Path]:

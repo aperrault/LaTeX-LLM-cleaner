@@ -65,6 +65,7 @@ def main(argv: list[str] | None = None) -> None:
         "figure_summary_suffix": args.figure_summary_suffix,
         "encoding": args.encoding,
         "verbose": args.verbose,
+        "input_file": input_path,
     }
 
     result = run_pipeline(content, input_path.parent.resolve(), options)

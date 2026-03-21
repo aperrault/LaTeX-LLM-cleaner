@@ -107,3 +107,60 @@ def test_uncited_entries_excluded(tmp_path):
     result = inline_bibliography(content, tmp_path, OPTS)
     assert "\\bibitem{smith2020}" in result
     assert "\\bibitem{doe2021}" not in result
+
+
+# --- .bbl file tests ---
+
+SAMPLE_BBL = """\
+\\begin{thebibliography}{1}
+
+\\bibitem{smith2020}
+John Smith.
+\\newblock A Great Paper.
+\\newblock Journal of Things. 2020;1:1--10.
+
+\\end{thebibliography}"""
+
+
+def test_bbl_file_used(tmp_path):
+    (tmp_path / "main.bbl").write_text(SAMPLE_BBL)
+    content = (
+        "See \\cite{smith2020}.\n"
+        "\\bibliographystyle{plain}\n"
+        "\\bibliography{refs}"
+    )
+    opts = {**OPTS, "input_file": tmp_path / "main.tex"}
+    result = inline_bibliography(content, tmp_path, opts)
+    assert "\\begin{thebibliography}" in result
+    assert "\\bibitem{smith2020}" in result
+    assert "\\bibliography{" not in result
+    assert "\\bibliographystyle{" not in result
+
+
+def test_bbl_priority_over_bib(tmp_path):
+    (tmp_path / "main.bbl").write_text(SAMPLE_BBL)
+    (tmp_path / "refs.bib").write_text(SAMPLE_BIB)
+    content = "See \\cite{smith2020}.\n\\bibliography{refs}"
+    opts = {**OPTS, "input_file": tmp_path / "main.tex"}
+    result = inline_bibliography(content, tmp_path, opts)
+    # .bbl content includes \newblock, .bib-generated content does not
+    assert "\\newblock" in result
+
+
+def test_bbl_by_bib_name(tmp_path):
+    """When \bibliography{refs} is used, try refs.bbl too."""
+    (tmp_path / "refs.bbl").write_text(SAMPLE_BBL)
+    content = "See \\cite{smith2020}.\n\\bibliography{refs}"
+    result = inline_bibliography(content, tmp_path, OPTS)
+    assert "\\begin{thebibliography}" in result
+    assert "\\bibitem{smith2020}" in result
+
+
+def test_fallback_to_bib_when_no_bbl(tmp_path):
+    (tmp_path / "refs.bib").write_text(SAMPLE_BIB)
+    content = "See \\cite{smith2020}.\n\\bibliography{refs}"
+    opts = {**OPTS, "input_file": tmp_path / "main.tex"}
+    result = inline_bibliography(content, tmp_path, opts)
+    assert "\\bibitem{smith2020}" in result
+    # .bib path formats entries without \newblock
+    assert "\\newblock" not in result

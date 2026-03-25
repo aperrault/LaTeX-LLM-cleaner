@@ -4,15 +4,17 @@ import argparse
 import sys
 from pathlib import Path
 
+from .pdf import extract_text_from_pdf
 from .pipeline import run_pipeline
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="latex-llm-cleaner",
-        description="Flatten and clean LaTeX files for LLM consumption.",
+        description="Flatten and clean LaTeX files for LLM consumption. "
+        "Accepts .tex files (full pipeline) or .pdf files (text extraction).",
     )
-    parser.add_argument("input_file", type=Path, help="Input .tex file")
+    parser.add_argument("input_file", type=Path, help="Input .tex or .pdf file")
     parser.add_argument(
         "-o", "--output", type=Path, default=None, help="Output file (default: stdout)"
     )
@@ -57,20 +59,25 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Error: {input_path} not found", file=sys.stderr)
         sys.exit(1)
 
-    content = input_path.read_text(encoding=args.encoding)
+    if input_path.suffix.lower() == ".pdf":
+        if args.verbose:
+            print("PDF input detected, extracting text...", file=sys.stderr)
+        result = extract_text_from_pdf(input_path, verbose=args.verbose)
+    else:
+        content = input_path.read_text(encoding=args.encoding)
 
-    options = {
-        "flatten": not args.no_flatten,
-        "comments": not args.no_comments,
-        "bibliography": not args.no_bibliography,
-        "figures": not args.no_figures,
-        "figure_summary_suffix": args.figure_summary_suffix,
-        "encoding": args.encoding,
-        "verbose": args.verbose,
-        "input_file": input_path,
-    }
+        options = {
+            "flatten": not args.no_flatten,
+            "comments": not args.no_comments,
+            "bibliography": not args.no_bibliography,
+            "figures": not args.no_figures,
+            "figure_summary_suffix": args.figure_summary_suffix,
+            "encoding": args.encoding,
+            "verbose": args.verbose,
+            "input_file": input_path,
+        }
 
-    result = run_pipeline(content, input_path.parent.resolve(), options)
+        result = run_pipeline(content, input_path.parent.resolve(), options)
 
     if args.output:
         args.output.write_text(result, encoding=args.encoding)

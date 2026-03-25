@@ -1,3 +1,3 @@
 """LaTeX LLM Cleaner — flatten and clean LaTeX for LLM consumption."""
 
-__version__ = "0.2.1"
+__version__ = "0.4.0"

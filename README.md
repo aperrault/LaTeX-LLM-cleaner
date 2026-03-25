@@ -1,11 +1,14 @@
 # LaTeX LLM Cleaner
 
-A Python CLI tool that takes a LaTeX `.tex` file and produces a flattened, cleaned version optimized for LLM consumption. Combines functionality from tools like [flachtex](https://github.com/simonsan/flachtex), [arxiv_latex_cleaner](https://github.com/google-research/arxiv-latex-cleaner), and [pandoc](https://pandoc.org/) into a single utility.
+A Python CLI tool that takes a LaTeX `.tex` file or compiled `.pdf` and produces a cleaned text version optimized for LLM consumption. Combines functionality from tools like [flachtex](https://github.com/simonsan/flachtex), [arxiv_latex_cleaner](https://github.com/google-research/arxiv-latex-cleaner), and [pandoc](https://pandoc.org/) into a single utility.
 
 ## Installation
 
 ```bash
 pip install latex-llm-cleaner
+
+# With PDF support:
+pip install latex-llm-cleaner[pdf]
 ```
 
 Or from source:
@@ -22,6 +25,7 @@ pip install -e ".[dev]"
 latex-llm-cleaner paper.tex                    # output to stdout
 latex-llm-cleaner paper.tex -o cleaned.tex     # output to file
 latex-llm-cleaner paper.tex --no-bibliography  # skip bib inlining
+latex-llm-cleaner thesis.pdf -o thesis.md      # extract text from PDF
 ```
 
 All features are **on by default**. Disable individual steps with `--no-*` flags:
@@ -40,7 +44,18 @@ Options:
   -v, --verbose              Print processing info to stderr
 ```
 
-## Processing Pipeline
+## PDF Input
+
+For compiled PDFs (e.g., theses, published papers), latex-llm-cleaner extracts the text as markdown, preserving table structure and dropping images. This requires the optional `pdf` extra:
+
+```bash
+pip install latex-llm-cleaner[pdf]
+latex-llm-cleaner thesis.pdf -o thesis.md
+```
+
+Tables are output as markdown tables with `|` delimiters. Images are noted as `[picture omitted]` placeholders. The `.tex` pipeline flags (`--no-flatten`, etc.) are ignored for PDF input since they don't apply.
+
+## Processing Pipeline (.tex files)
 
 The four steps run in this order (each operates on the output of the previous step):
 

@@ -43,4 +43,4 @@ build-backend = "hatchling.build"
 packages = ["src/latex_llm_cleaner"]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["examples/"]
+exclude = ["examples/", ".venv*/"]

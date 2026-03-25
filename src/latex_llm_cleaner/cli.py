@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .pdf import extract_text_from_pdf
+from .pdf import extract_text_from_pdf, extract_text_from_pdf_ocr
 from .pipeline import run_pipeline
 
 
@@ -45,6 +45,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--encoding", default="utf-8", help="File encoding (default: utf-8)"
     )
     parser.add_argument(
+        "--ocr",
+        action="store_true",
+        help="Use Surya vision OCR for PDF extraction (recovers LaTeX equations, slower). "
+        "Requires: pip install latex-llm-cleaner[ocr]",
+    )
+    parser.add_argument(
         "-v", "--verbose", action="store_true", help="Print processing info to stderr"
     )
     return parser
@@ -60,9 +66,14 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     if input_path.suffix.lower() == ".pdf":
-        if args.verbose:
-            print("PDF input detected, extracting text...", file=sys.stderr)
-        result = extract_text_from_pdf(input_path, verbose=args.verbose)
+        if args.ocr:
+            if args.verbose:
+                print("PDF input detected, using Surya OCR...", file=sys.stderr)
+            result = extract_text_from_pdf_ocr(input_path, verbose=args.verbose)
+        else:
+            if args.verbose:
+                print("PDF input detected, extracting text...", file=sys.stderr)
+            result = extract_text_from_pdf(input_path, verbose=args.verbose)
     else:
         content = input_path.read_text(encoding=args.encoding)
 

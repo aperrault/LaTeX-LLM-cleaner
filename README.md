@@ -26,6 +26,7 @@ latex-llm-cleaner paper.tex                    # output to stdout
 latex-llm-cleaner paper.tex -o cleaned.tex     # output to file
 latex-llm-cleaner paper.tex --no-bibliography  # skip bib inlining
 latex-llm-cleaner thesis.pdf -o thesis.md      # extract text from PDF
+latex-llm-cleaner thesis.pdf --ocr -o thesis.md  # OCR with LaTeX equation recovery
 ```
 
 All features are **on by default**. Disable individual steps with `--no-*` flags:
@@ -40,6 +41,7 @@ Options:
   --no-bibliography          Disable bibliography inlining
   --no-figures               Disable figure summary substitution
   --figure-summary-suffix S  Suffix for summary files (default: _summary.txt)
+  --ocr                      Use Surya vision OCR (recovers LaTeX equations, slower)
   --encoding ENC             File encoding (default: utf-8)
   -v, --verbose              Print processing info to stderr
 ```
@@ -54,6 +56,17 @@ latex-llm-cleaner thesis.pdf -o thesis.md
 ```
 
 Tables are output as markdown tables with `|` delimiters. Images are noted as `[picture omitted]` placeholders. The `.tex` pipeline flags (`--no-flatten`, etc.) are ignored for PDF input since they don't apply.
+
+### OCR mode (equation recovery)
+
+The default PDF extraction is fast but loses display equations. For compiled LaTeX PDFs, the `--ocr` flag uses [Surya](https://github.com/VikParuchuri/surya) vision-based OCR to recover equations as LaTeX source:
+
+```bash
+pip install latex-llm-cleaner[ocr]
+latex-llm-cleaner thesis.pdf --ocr -o thesis.md
+```
+
+This reconstructs inline math as `$...$` and display equations as `$$...$$` with full LaTeX notation. It's slower (~30s/page on Apple Silicon) but dramatically more accurate for math-heavy documents. Requires Python ≤ 3.13.
 
 ## Processing Pipeline (.tex files)
 

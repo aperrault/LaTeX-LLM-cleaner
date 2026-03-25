@@ -1,6 +1,6 @@
 [project]
 name = "latex-llm-cleaner"
-version = "0.5.0"
+version = "0.6.0"
 description = "Flatten and clean LaTeX files for LLM consumption"
 license = "MIT"
 requires-python = ">=3.10"
@@ -29,6 +29,7 @@ Issues = "https://github.com/aperrault/LaTeX-LLM-cleaner/issues"
 
 [project.optional-dependencies]
 pdf = ["pymupdf4llm>=0.0.17"]
+ocr = ["surya-ocr>=0.17.0", "pymupdf>=1.24.0"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]

@@ -34,6 +34,86 @@ def extract_text_from_pdf(path: Path, verbose: bool = False) -> str:
     return _clean_markdown(md)
 
 
+def extract_text_from_pdf_ocr(path: Path, verbose: bool = False) -> str:
+    """Extract text from a PDF using Surya vision-based OCR.
+
+    Recovers LaTeX equations from compiled PDFs by running OCR on rendered
+    page images. Slower than pymupdf4llm but produces accurate LaTeX math.
+
+    Requires surya-ocr: pip install latex-llm-cleaner[ocr]
+    """
+    try:
+        from surya.detection import DetectionPredictor
+        from surya.recognition import FoundationPredictor, RecognitionPredictor
+    except ImportError:
+        print(
+            "Error: OCR support requires surya-ocr. "
+            "Install it with: pip install latex-llm-cleaner[ocr]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    import fitz
+    from PIL import Image
+
+    if verbose:
+        print("  Loading OCR models...", file=sys.stderr)
+
+    foundation = FoundationPredictor()
+    det = DetectionPredictor()
+    rec = RecognitionPredictor(foundation)
+
+    doc = fitz.open(path)
+    page_count = doc.page_count
+
+    if verbose:
+        print(f"  OCR processing {page_count} pages...", file=sys.stderr)
+
+    # Render all pages as images
+    images = []
+    for pno in range(page_count):
+        page = doc[pno]
+        mat = fitz.Matrix(2, 2)  # 2x zoom for OCR quality
+        pix = page.get_pixmap(matrix=mat)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        images.append(img)
+    doc.close()
+
+    # Run OCR on all pages
+    predictions = rec(images, det_predictor=det)
+
+    # Assemble into document text
+    pages_text = []
+    for i, pred in enumerate(predictions):
+        if verbose:
+            print(f"  Page {i + 1}/{page_count}: {len(pred.text_lines)} lines", file=sys.stderr)
+        lines = [line.text for line in pred.text_lines]
+        pages_text.append("\n".join(lines))
+
+    text = "\n\n".join(pages_text)
+    return _convert_surya_markup(text)
+
+
+def _convert_surya_markup(text: str) -> str:
+    """Convert Surya's HTML-style markup to markdown/LaTeX conventions."""
+    # Display math: <math display="block">...</math> → $$...$$
+    text = re.sub(
+        r'<math display="block">(.*?)</math>',
+        r"$$\1$$",
+        text,
+        flags=re.DOTALL,
+    )
+    # Inline math: <math>...</math> → $...$
+    text = re.sub(r"<math>(.*?)</math>", r"$\1$", text)
+    # Bold: <b>...</b> → **...**
+    text = re.sub(r"<b>(.*?)</b>", r"**\1**", text)
+    # Superscript: <sup>...</sup> → ^{...}
+    text = re.sub(r"<sup>(.*?)</sup>", r"^{\1}", text)
+    # Subscript: <sub>...</sub> → _{...}
+    text = re.sub(r"<sub>(.*?)</sub>", r"_{\1}", text)
+    return text
+
+
 def _clean_markdown(text: str) -> str:
     """Post-process pymupdf4llm output for LLM consumption.
 

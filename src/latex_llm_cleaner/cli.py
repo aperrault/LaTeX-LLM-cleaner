@@ -12,9 +12,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="latex-llm-cleaner",
         description="Flatten and clean LaTeX files for LLM consumption. "
-        "Accepts .tex files (full pipeline) or .pdf files (text extraction).",
+        "Accepts .tex files (full pipeline), .pdf files (text extraction), "
+        "or .pptx files (slide extraction).",
     )
-    parser.add_argument("input_file", type=Path, help="Input .tex or .pdf file")
+    parser.add_argument("input_file", type=Path, help="Input .tex, .pdf, or .pptx file")
     parser.add_argument(
         "-o", "--output", type=Path, default=None, help="Output file (default: stdout)"
     )
@@ -43,6 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--encoding", default="utf-8", help="File encoding (default: utf-8)"
+    )
+    parser.add_argument(
+        "--notes",
+        action="store_true",
+        help="Include speaker notes in PPTX output (default: off)",
     )
     parser.add_argument(
         "--ocr",
@@ -74,6 +80,18 @@ def main(argv: list[str] | None = None) -> None:
             if args.verbose:
                 print("PDF input detected, extracting text...", file=sys.stderr)
             result = extract_text_from_pdf(input_path, verbose=args.verbose)
+    elif input_path.suffix.lower() == ".pptx":
+        from .powerpoint import extract_text_from_pptx
+
+        if args.verbose:
+            print("PPTX input detected, extracting slides...", file=sys.stderr)
+        result = extract_text_from_pptx(
+            input_path,
+            verbose=args.verbose,
+            notes=args.notes,
+            figure_summary_suffix=args.figure_summary_suffix,
+            encoding=args.encoding,
+        )
     else:
         content = input_path.read_text(encoding=args.encoding)
 

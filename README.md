@@ -1,6 +1,6 @@
 # LaTeX LLM Cleaner
 
-A Python CLI tool that takes a LaTeX `.tex` file or compiled `.pdf` and produces a cleaned text version optimized for LLM consumption. Combines functionality from tools like [flachtex](https://github.com/simonsan/flachtex), [arxiv_latex_cleaner](https://github.com/google-research/arxiv-latex-cleaner), and [pandoc](https://pandoc.org/) into a single utility.
+A Python CLI tool that takes a LaTeX `.tex` file, compiled `.pdf`, or PowerPoint `.pptx` and produces a cleaned text version optimized for LLM consumption. Combines functionality from tools like [flachtex](https://github.com/simonsan/flachtex), [arxiv_latex_cleaner](https://github.com/google-research/arxiv-latex-cleaner), and [pandoc](https://pandoc.org/) into a single utility.
 
 ## Installation
 
@@ -9,6 +9,9 @@ pip install latex-llm-cleaner
 
 # With PDF support:
 pip install latex-llm-cleaner[pdf]
+
+# With PPTX support:
+pip install latex-llm-cleaner[pptx]
 ```
 
 Or from source:
@@ -27,6 +30,8 @@ latex-llm-cleaner paper.tex -o cleaned.tex     # output to file
 latex-llm-cleaner paper.tex --no-bibliography  # skip bib inlining
 latex-llm-cleaner thesis.pdf -o thesis.md      # extract text from PDF
 latex-llm-cleaner thesis.pdf --ocr -o thesis.md  # OCR with LaTeX equation recovery
+latex-llm-cleaner slides.pptx -o slides.md       # extract slides from PPTX
+latex-llm-cleaner slides.pptx --notes -o slides.md  # include speaker notes
 ```
 
 All features are **on by default**. Disable individual steps with `--no-*` flags:
@@ -41,6 +46,7 @@ Options:
   --no-bibliography          Disable bibliography inlining
   --no-figures               Disable figure summary substitution
   --figure-summary-suffix S  Suffix for summary files (default: _summary.txt)
+  --notes                    Include speaker notes (PPTX only)
   --ocr                      Use Surya vision OCR (recovers LaTeX equations, slower)
   --encoding ENC             File encoding (default: utf-8)
   -v, --verbose              Print processing info to stderr
@@ -67,6 +73,38 @@ latex-llm-cleaner thesis.pdf --ocr -o thesis.md
 ```
 
 This reconstructs inline math as `$...$` and display equations as `$$...$$` with full LaTeX notation. It's slower (~30s/page on Apple Silicon) but dramatically more accurate for math-heavy documents. Requires Python ≤ 3.13.
+
+## PPTX Input
+
+For PowerPoint presentations, latex-llm-cleaner extracts slide content as markdown. This requires the optional `pptx` extra:
+
+```bash
+pip install latex-llm-cleaner[pptx]
+latex-llm-cleaner slides.pptx -o slides.md
+```
+
+Each slide becomes a markdown section with a heading (`# Slide N: Title`), separated by `---`. Tables are output as markdown pipe-tables. Images are shown as `[Image]` placeholders unless a summary file is provided (see below).
+
+Speaker notes are excluded by default. Use `--notes` to include them:
+
+```bash
+latex-llm-cleaner slides.pptx --notes -o slides.md
+```
+
+Equations stored as Office MathML (OMML) in the presentation are passed through as XML, which LLMs can read directly.
+
+### Image summaries for PPTX
+
+Since images are embedded in PPTX files (no file paths), summaries use a slide/image numbering convention. Place summary files in the same directory as the `.pptx`:
+
+```
+slides.pptx
+slide1_image1_summary.txt    ← first image on slide 1
+slide3_image1_summary.txt    ← first image on slide 3
+slide3_image2_summary.txt    ← second image on slide 3
+```
+
+The `--figure-summary-suffix` flag works here too (default: `_summary.txt`).
 
 ## Processing Pipeline (.tex files)
 

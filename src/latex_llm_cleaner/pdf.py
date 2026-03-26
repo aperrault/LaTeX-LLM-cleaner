@@ -82,16 +82,91 @@ def extract_text_from_pdf_ocr(path: Path, verbose: bool = False) -> str:
     # Run OCR on all pages
     predictions = rec(images, det_predictor=det)
 
-    # Assemble into document text
+    # Assemble into document text with column-aware ordering
     pages_text = []
     for i, pred in enumerate(predictions):
+        reordered = _reorder_text_lines(pred.text_lines, images[i].width)
         if verbose:
-            print(f"  Page {i + 1}/{page_count}: {len(pred.text_lines)} lines", file=sys.stderr)
-        lines = [line.text for line in pred.text_lines]
+            removed = len(pred.text_lines) - len(reordered)
+            extra = f" ({removed} margin lines filtered)" if removed else ""
+            print(
+                f"  Page {i + 1}/{page_count}: {len(reordered)} lines{extra}",
+                file=sys.stderr,
+            )
+        lines = [line.text for line in reordered]
         pages_text.append("\n".join(lines))
 
     text = "\n\n".join(pages_text)
     return _convert_surya_markup(text)
+
+
+def _reorder_text_lines(text_lines: list, page_width: int) -> list:
+    """Reorder OCR text lines for correct two-column reading order
+    and filter out margin line numbers.
+
+    For two-column papers, Surya detects lines in scan order (left-right
+    alternating). This function groups lines by column and emits each
+    column top-to-bottom. Full-width lines (titles, section headers)
+    act as column-flush boundaries.
+    """
+    if not text_lines:
+        return []
+
+    page_mid = page_width / 2
+    margin_threshold = page_width * 0.08
+
+    # Step 1: Filter margin line numbers (spatial + content check)
+    filtered = []
+    for line in text_lines:
+        bbox = line.bbox  # [x_min, y_min, x_max, y_max]
+        x_center = (bbox[0] + bbox[2]) / 2
+        in_margin = x_center < margin_threshold or x_center > page_width - margin_threshold
+        is_number = bool(re.match(r"^\d{1,4}$", line.text.strip()))
+        if in_margin and is_number:
+            continue
+        filtered.append(line)
+
+    # Step 2: Classify lines
+    full_width_threshold = page_width * 0.5
+
+    def classify(line):
+        bbox = line.bbox
+        width = bbox[2] - bbox[0]
+        center = (bbox[0] + bbox[2]) / 2
+        if bbox[0] < page_mid and bbox[2] > page_mid and width > full_width_threshold:
+            return "full"
+        elif center < page_mid:
+            return "left"
+        else:
+            return "right"
+
+    # Step 3: Build reading order
+    sorted_lines = sorted(filtered, key=lambda l: l.bbox[1])
+
+    result: list = []
+    left_buf: list = []
+    right_buf: list = []
+
+    def flush_columns():
+        left_buf.sort(key=lambda l: l.bbox[1])
+        right_buf.sort(key=lambda l: l.bbox[1])
+        result.extend(left_buf)
+        result.extend(right_buf)
+        left_buf.clear()
+        right_buf.clear()
+
+    for line in sorted_lines:
+        cat = classify(line)
+        if cat == "full":
+            flush_columns()
+            result.append(line)
+        elif cat == "left":
+            left_buf.append(line)
+        else:
+            right_buf.append(line)
+
+    flush_columns()
+    return result
 
 
 def _convert_surya_markup(text: str) -> str:

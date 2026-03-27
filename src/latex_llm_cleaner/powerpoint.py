@@ -1,8 +1,10 @@
 """Extract text from PPTX files for LLM consumption."""
 
-import sys
 from pathlib import Path
 from xml.etree.ElementTree import tostring as xml_tostring
+
+from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 _OMML_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 
@@ -14,21 +16,7 @@ def extract_text_from_pptx(
     figure_summary_suffix: str = "_summary.txt",
     encoding: str = "utf-8",
 ) -> str:
-    """Extract text from a PPTX as markdown.
-
-    Requires python-pptx: pip install latex-llm-cleaner[pptx]
-    """
-    try:
-        from pptx import Presentation
-        from pptx.enum.shapes import MSO_SHAPE_TYPE
-    except ImportError:
-        print(
-            "Error: PPTX support requires python-pptx. "
-            "Install it with: pip install latex-llm-cleaner[pptx]",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
+    """Extract text from a PPTX as markdown."""
     prs = Presentation(str(path))
     base_dir = path.parent.resolve()
     slides_md = []
@@ -85,8 +73,6 @@ def _slide_to_markdown(
 def _shape_to_text(shape, slide_num, image_counter, base_dir,
                    figure_summary_suffix, encoding, verbose):
     """Convert a shape to text. Returns (text, updated_image_counter)."""
-    from pptx.enum.shapes import MSO_SHAPE_TYPE
-
     # Group shape — recurse
     if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
         group_parts = []

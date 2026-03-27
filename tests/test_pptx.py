@@ -1,22 +1,11 @@
 """Tests for PPTX text extraction."""
 
-import pytest
 from pathlib import Path
-from unittest.mock import patch
+
+from pptx import Presentation
+from pptx.util import Inches
 
 from latex_llm_cleaner.powerpoint import extract_text_from_pptx
-
-
-try:
-    import pptx
-
-    HAS_PYTHON_PPTX = True
-except ImportError:
-    HAS_PYTHON_PPTX = False
-
-skip_no_pptx = pytest.mark.skipif(
-    not HAS_PYTHON_PPTX, reason="python-pptx not installed"
-)
 
 
 def _create_test_pptx(path, slides_data):
@@ -29,9 +18,6 @@ def _create_test_pptx(path, slides_data):
         - table: list[list[str]]  (rows of cells)
         - image_path: Path to an image file to embed
     """
-    from pptx import Presentation
-    from pptx.util import Inches
-
     prs = Presentation()
     for slide_info in slides_data:
         if "table" in slide_info:
@@ -65,8 +51,6 @@ def _create_test_pptx(path, slides_data):
             slide = prs.slides.add_slide(layout)
 
         if "image_path" in slide_info:
-            from pptx.util import Inches
-
             slide.shapes.add_picture(
                 str(slide_info["image_path"]), Inches(1), Inches(1), Inches(2), Inches(2)
             )
@@ -77,7 +61,6 @@ def _create_test_pptx(path, slides_data):
     prs.save(str(path))
 
 
-@skip_no_pptx
 def test_basic_extraction(tmp_path):
     pptx_path = tmp_path / "test.pptx"
     _create_test_pptx(pptx_path, [{"title": "Hello", "body": "World"}])
@@ -86,7 +69,6 @@ def test_basic_extraction(tmp_path):
     assert "World" in result
 
 
-@skip_no_pptx
 def test_slide_numbering(tmp_path):
     pptx_path = tmp_path / "test.pptx"
     _create_test_pptx(pptx_path, [
@@ -98,7 +80,6 @@ def test_slide_numbering(tmp_path):
     assert "# Slide 2: Second" in result
 
 
-@skip_no_pptx
 def test_slide_separator(tmp_path):
     pptx_path = tmp_path / "test.pptx"
     _create_test_pptx(pptx_path, [
@@ -109,7 +90,6 @@ def test_slide_separator(tmp_path):
     assert "\n\n---\n\n" in result
 
 
-@skip_no_pptx
 def test_no_title(tmp_path):
     pptx_path = tmp_path / "test.pptx"
     _create_test_pptx(pptx_path, [{}])  # blank slide
@@ -117,7 +97,6 @@ def test_no_title(tmp_path):
     assert "# Slide 1" in result
 
 
-@skip_no_pptx
 def test_notes_off_by_default(tmp_path):
     pptx_path = tmp_path / "test.pptx"
     _create_test_pptx(pptx_path, [
@@ -127,7 +106,6 @@ def test_notes_off_by_default(tmp_path):
     assert "Secret notes" not in result
 
 
-@skip_no_pptx
 def test_notes_included_when_enabled(tmp_path):
     pptx_path = tmp_path / "test.pptx"
     _create_test_pptx(pptx_path, [
@@ -138,7 +116,6 @@ def test_notes_included_when_enabled(tmp_path):
     assert "> **Notes:**" in result
 
 
-@skip_no_pptx
 def test_table_extraction(tmp_path):
     pptx_path = tmp_path / "test.pptx"
     _create_test_pptx(pptx_path, [
@@ -151,14 +128,11 @@ def test_table_extraction(tmp_path):
     assert "| Bob | 87 |" in result
 
 
-@skip_no_pptx
 def test_image_summary_lookup(tmp_path):
     """Image with a matching summary file should be replaced."""
-    # Create a tiny PNG for embedding
     img_path = tmp_path / "tiny.png"
     _create_tiny_png(img_path)
 
-    # Create summary file
     summary_path = tmp_path / "slide1_image1_summary.txt"
     summary_path.write_text("A bar chart showing results.")
 
@@ -170,7 +144,6 @@ def test_image_summary_lookup(tmp_path):
     assert "[Image: A bar chart showing results.]" in result
 
 
-@skip_no_pptx
 def test_image_no_summary(tmp_path):
     """Image without summary should produce [Image] placeholder."""
     img_path = tmp_path / "tiny.png"
@@ -184,22 +157,11 @@ def test_image_no_summary(tmp_path):
     assert "[Image]" in result
 
 
-def test_import_error_message(tmp_path):
-    """When python-pptx is not installed, should exit with helpful message."""
-    pptx_path = tmp_path / "test.pptx"
-    pptx_path.write_bytes(b"fake")
-
-    with patch.dict("sys.modules", {"pptx": None}):
-        with pytest.raises(SystemExit):
-            extract_text_from_pptx(pptx_path)
-
-
 def _create_tiny_png(path):
     """Create a minimal valid PNG file."""
     import struct
     import zlib
 
-    # 1x1 white PNG
     def chunk(chunk_type, data):
         c = chunk_type + data
         crc = struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)

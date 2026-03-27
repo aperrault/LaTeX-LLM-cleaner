@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .pdf import extract_text_from_pdf, extract_text_from_pdf_ocr
 from .pipeline import run_pipeline
+from .powerpoint import extract_text_from_pptx
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -81,8 +82,6 @@ def main(argv: list[str] | None = None) -> None:
                 print("PDF input detected, extracting text...", file=sys.stderr)
             result = extract_text_from_pdf(input_path, verbose=args.verbose)
     elif input_path.suffix.lower() == ".pptx":
-        from .powerpoint import extract_text_from_pptx
-
         if args.verbose:
             print("PPTX input detected, extracting slides...", file=sys.stderr)
         result = extract_text_from_pptx(

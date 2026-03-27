@@ -6,19 +6,34 @@ A Python CLI tool that takes a LaTeX `.tex` file, compiled `.pdf`, or PowerPoint
 
 ```bash
 pip install latex-llm-cleaner
-
-# With PDF support:
-pip install latex-llm-cleaner[pdf]
-
-# With PPTX support:
-pip install latex-llm-cleaner[pptx]
 ```
 
-Or from source:
+This includes support for `.tex`, `.pdf`, and `.pptx` files out of the box.
+
+For OCR-based equation recovery from PDFs (requires Python ≤ 3.13):
 
 ```bash
-pip install .
-# or for development:
+pip install 'latex-llm-cleaner[ocr]'
+```
+
+### Global install
+
+```bash
+# Recommended — handles extras natively:
+uv tool install latex-llm-cleaner
+uv tool install 'latex-llm-cleaner[ocr]'
+
+# Alternative (pipx):
+pipx install latex-llm-cleaner
+# For OCR with pipx, inject the heavy dependencies:
+pipx inject latex-llm-cleaner surya-ocr 'transformers<5'
+```
+
+> **Note:** OCR requires `libjpeg` headers. On macOS: `brew install jpeg`
+
+### From source
+
+```bash
 pip install -e ".[dev]"
 ```
 
@@ -54,34 +69,20 @@ Options:
 
 ## PDF Input
 
-For compiled PDFs (e.g., theses, published papers), latex-llm-cleaner extracts the text as markdown, preserving table structure and dropping images. This requires the optional `pdf` extra:
-
-```bash
-pip install latex-llm-cleaner[pdf]
-latex-llm-cleaner thesis.pdf -o thesis.md
-```
-
-Tables are output as markdown tables with `|` delimiters. Images are noted as `[picture omitted]` placeholders. The `.tex` pipeline flags (`--no-flatten`, etc.) are ignored for PDF input since they don't apply.
+For compiled PDFs (e.g., theses, published papers), latex-llm-cleaner extracts the text as markdown, preserving table structure and dropping images. Tables are output as markdown tables with `|` delimiters. Images are noted as `[picture omitted]` placeholders. The `.tex` pipeline flags (`--no-flatten`, etc.) are ignored for PDF input since they don't apply.
 
 ### OCR mode (equation recovery)
 
 The default PDF extraction is fast but loses display equations. For compiled LaTeX PDFs, the `--ocr` flag uses [Surya](https://github.com/VikParuchuri/surya) vision-based OCR to recover equations as LaTeX source:
 
 ```bash
-pip install latex-llm-cleaner[ocr]
+pip install 'latex-llm-cleaner[ocr]'
 latex-llm-cleaner thesis.pdf --ocr -o thesis.md
 ```
 
 This reconstructs inline math as `$...$` and display equations as `$$...$$` with full LaTeX notation. It's slower (~30s/page on Apple Silicon) but dramatically more accurate for math-heavy documents. Requires Python ≤ 3.13.
 
 ## PPTX Input
-
-For PowerPoint presentations, latex-llm-cleaner extracts slide content as markdown. This requires the optional `pptx` extra:
-
-```bash
-pip install latex-llm-cleaner[pptx]
-latex-llm-cleaner slides.pptx -o slides.md
-```
 
 Each slide becomes a markdown section with a heading (`# Slide N: Title`), separated by `---`. Tables are output as markdown pipe-tables. Images are shown as `[Image]` placeholders unless a summary file is provided (see below).
 

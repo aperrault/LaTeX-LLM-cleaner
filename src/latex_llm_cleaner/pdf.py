@@ -4,25 +4,14 @@ import re
 import sys
 from pathlib import Path
 
+import pymupdf4llm
+
 # Combining diacritics that pymupdf4llm splits from their base character
 _DIACRITICS = "ˆˇ˜¯˙"
 
 
 def extract_text_from_pdf(path: Path, verbose: bool = False) -> str:
-    """Extract text from a PDF as markdown, preserving tables and structure.
-
-    Requires pymupdf4llm: pip install latex-llm-cleaner[pdf]
-    """
-    try:
-        import pymupdf4llm
-    except ImportError:
-        print(
-            "Error: PDF support requires pymupdf4llm. "
-            "Install it with: pip install latex-llm-cleaner[pdf]",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
+    """Extract text from a PDF as markdown, preserving tables and structure."""
     if verbose:
         import fitz
 
@@ -40,15 +29,17 @@ def extract_text_from_pdf_ocr(path: Path, verbose: bool = False) -> str:
     Recovers LaTeX equations from compiled PDFs by running OCR on rendered
     page images. Slower than pymupdf4llm but produces accurate LaTeX math.
 
-    Requires surya-ocr: pip install latex-llm-cleaner[ocr]
+    Requires surya-ocr: pip install 'latex-llm-cleaner[ocr]'
     """
     try:
         from surya.detection import DetectionPredictor
         from surya.recognition import FoundationPredictor, RecognitionPredictor
     except ImportError:
         print(
-            "Error: OCR support requires surya-ocr. "
-            "Install it with: pip install latex-llm-cleaner[ocr]",
+            "Error: OCR support requires surya-ocr.\n"
+            "Install with: pip install 'latex-llm-cleaner[ocr]'\n"
+            "Or globally:  uv tool install 'latex-llm-cleaner[ocr]'\n"
+            "Note: requires Python ≤ 3.13 and libjpeg (brew install jpeg on macOS).",
             file=sys.stderr,
         )
         sys.exit(1)

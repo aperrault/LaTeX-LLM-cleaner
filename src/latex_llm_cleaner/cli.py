@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> None:
             "input_file": input_path,
         }
 
-        result = run_pipeline(content, input_path.parent.resolve(), options)
+        result = run_pipeline(content, Path.cwd(), options)
 
     if args.output:
         args.output.write_text(result, encoding=args.encoding)

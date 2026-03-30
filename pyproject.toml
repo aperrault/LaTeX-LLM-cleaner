@@ -1,6 +1,6 @@
 [project]
 name = "latex-llm-cleaner"
-version = "0.9.0"
+version = "0.9.1"
 description = "Flatten and clean LaTeX, PDF, and PPTX files for LLM consumption"
 license = "MIT"
 requires-python = ">=3.10"

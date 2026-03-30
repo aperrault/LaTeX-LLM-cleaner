@@ -94,6 +94,15 @@ def main(argv: list[str] | None = None) -> None:
                 print("PDF input detected, extracting text...", file=sys.stderr)
             result = extract_text_from_pdf(input_path, verbose=args.verbose)
     elif input_path.suffix.lower() == ".pptx":
+        if args.auto_summarize:
+            from .summarize import auto_summarize_pptx
+
+            auto_summarize_pptx(input_path, {
+                "google_api_key": args.google_api_key or os.environ.get("GOOGLE_API_KEY"),
+                "verbose": args.verbose,
+                "figure_summary_suffix": args.figure_summary_suffix,
+                "encoding": args.encoding,
+            })
         if args.verbose:
             print("PPTX input detected, extracting slides...", file=sys.stderr)
         result = extract_text_from_pptx(

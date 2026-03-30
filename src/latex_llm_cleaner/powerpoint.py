@@ -1,5 +1,6 @@
 """Extract text from PPTX files for LLM consumption."""
 
+import sys
 from pathlib import Path
 from xml.etree.ElementTree import tostring as xml_tostring
 

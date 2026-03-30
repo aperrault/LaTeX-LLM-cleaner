@@ -86,12 +86,9 @@ def _get_mime_type(image_path: Path) -> str:
 
 
 @_retry_with_backoff()
-def _call_gemini(client, image_path: Path, prompt: str) -> str:
-    """Send image + prompt to Gemini, return generated text."""
+def _call_gemini_bytes(client, image_bytes: bytes, mime_type: str, prompt: str) -> str:
+    """Send image bytes + prompt to Gemini, return generated text."""
     from google.genai import types  # noqa: E402
-
-    image_bytes = image_path.read_bytes()
-    mime_type = _get_mime_type(image_path)
 
     response = client.models.generate_content(
         model=_MODEL,
@@ -105,6 +102,13 @@ def _call_gemini(client, image_path: Path, prompt: str) -> str:
         ],
     )
     return response.text
+
+
+def _call_gemini(client, image_path: Path, prompt: str) -> str:
+    """Send image file + prompt to Gemini, return generated text."""
+    return _call_gemini_bytes(
+        client, image_path.read_bytes(), _get_mime_type(image_path), prompt
+    )
 
 
 def auto_summarize_figures(content: str, base_dir: Path, options: dict) -> str:
@@ -204,3 +208,93 @@ def auto_summarize_figures(content: str, base_dir: Path, options: dict) -> str:
         )
 
     return content
+
+
+def auto_summarize_pptx(path: Path, options: dict) -> None:
+    """Generate summary files for PPTX images that lack them.
+
+    Writes slide{N}_image{M}_summary.txt files next to the PPTX so the
+    existing extraction pipeline picks them up.
+    """
+    try:
+        from google import genai  # noqa: E402
+    except ImportError:
+        print(
+            "Error: google-genai is required for --auto-summarize.\n"
+            "Install it with: pip install 'latex-llm-cleaner[summarize]'",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    api_key = options.get("google_api_key")
+    if not api_key:
+        print(
+            "Error: No Google API key found. Set GOOGLE_API_KEY or use --google-api-key.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    verbose = options.get("verbose", False)
+    suffix = options.get("figure_summary_suffix", "_summary.txt")
+    encoding = options.get("encoding", "utf-8")
+    base_dir = path.parent.resolve()
+
+    client = genai.Client(api_key=api_key)
+    prs = Presentation(str(path))
+    generated = 0
+    skipped = 0
+
+    def _process_shape(shape, slide_num, image_counter):
+        nonlocal generated, skipped
+
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            for child in shape.shapes:
+                image_counter = _process_shape(child, slide_num, image_counter)
+            return image_counter
+
+        if shape.shape_type != MSO_SHAPE_TYPE.PICTURE:
+            return image_counter
+
+        image_counter += 1
+        stem = f"slide{slide_num}_image{image_counter}"
+        summary_path = base_dir / (stem + suffix)
+
+        if summary_path.is_file():
+            if verbose:
+                print(f"  Skipping {stem} (summary exists)", file=sys.stderr)
+            skipped += 1
+            return image_counter
+
+        if verbose:
+            print(f"  Generating summary for {stem}...", file=sys.stderr)
+
+        try:
+            image_bytes = shape.image.blob
+            content_type = shape.image.content_type
+            summary_text = _call_gemini_bytes(client, image_bytes, content_type, _PROMPT)
+        except Exception as e:
+            print(f"  Warning: API error for {stem}: {e}", file=sys.stderr)
+            return image_counter
+
+        summary_path.write_text(summary_text, encoding=encoding)
+        generated += 1
+
+        if verbose:
+            print(f"  Wrote {summary_path}", file=sys.stderr)
+
+        return image_counter
+
+    for slide_num, slide in enumerate(prs.slides, start=1):
+        image_counter = 0
+        for shape in slide.shapes:
+            image_counter = _process_shape(shape, slide_num, image_counter)
+
+    if verbose:
+        total = generated + skipped
+        print(
+            f"  Generated {generated} summary file(s) ({skipped} skipped, {total} total images).",
+            file=sys.stderr,
+        )

@@ -1,6 +1,7 @@
 """Command-line interface for latex-llm-cleaner."""
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -58,6 +59,17 @@ def build_parser() -> argparse.ArgumentParser:
         "Requires: pip install latex-llm-cleaner[ocr]",
     )
     parser.add_argument(
+        "--auto-summarize",
+        action="store_true",
+        help="Auto-generate figure summaries using Gemini vision API. "
+        "Requires: pip install latex-llm-cleaner[summarize]",
+    )
+    parser.add_argument(
+        "--google-api-key",
+        default=None,
+        help="Google API key for --auto-summarize (default: GOOGLE_API_KEY env var)",
+    )
+    parser.add_argument(
         "-v", "--verbose", action="store_true", help="Print processing info to stderr"
     )
     return parser
@@ -103,6 +115,8 @@ def main(argv: list[str] | None = None) -> None:
             "encoding": args.encoding,
             "verbose": args.verbose,
             "input_file": input_path,
+            "auto_summarize": args.auto_summarize,
+            "google_api_key": args.google_api_key or os.environ.get("GOOGLE_API_KEY"),
         }
 
         result = run_pipeline(content, Path.cwd(), options)

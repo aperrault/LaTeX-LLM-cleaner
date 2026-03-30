@@ -33,6 +33,7 @@ Issues = "https://github.com/aperrault/LaTeX-LLM-cleaner/issues"
 
 [project.optional-dependencies]
 ocr = ["surya-ocr>=0.17.0", "pymupdf>=1.24.0", "transformers<5", "requests"]
+summarize = ["google-genai>=1.0.0"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]

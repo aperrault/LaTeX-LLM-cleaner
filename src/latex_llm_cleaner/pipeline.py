@@ -27,9 +27,16 @@ def run_pipeline(content: str, base_dir: Path, options: dict) -> str:
             print("Step 3: Inlining bibliography...", file=sys.stderr)
         content = inline_bibliography(content, base_dir, options)
 
+    if options.get("auto_summarize", False):
+        if verbose:
+            print("Step 4: Auto-generating figure summaries...", file=sys.stderr)
+        from .summarize import auto_summarize_figures
+
+        auto_summarize_figures(content, base_dir, options)
+
     if options.get("figures", True):
         if verbose:
-            print("Step 4: Substituting figures...", file=sys.stderr)
+            print("Step 5: Substituting figures...", file=sys.stderr)
         content = substitute_figures(content, base_dir, options)
 
     return content

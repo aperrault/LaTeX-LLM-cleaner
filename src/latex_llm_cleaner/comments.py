@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 # Environments whose content should not be modified
-_VERBATIM_ENVS = ("verbatim", "lstlisting", "minted")
+VERBATIM_ENVS = ("verbatim", "lstlisting", "minted")
 
 # Pattern to match \verb|...|  (any delimiter character)
 _VERB_INLINE_RE = re.compile(r"\\verb(.)(.+?)\1")
@@ -21,7 +21,7 @@ def remove_comments(content: str, base_dir: Path, options: dict) -> str:
     content = _COMMENT_ENV_RE.sub("", content)
 
     # Step 2: Mask verbatim environments and \verb|...|
-    content, verbatim_store = _mask_verbatim(content)
+    content, verbatim_store = mask_verbatim(content)
 
     # Step 3: Strip line comments using character scanning
     lines = content.split("\n")
@@ -36,7 +36,7 @@ def remove_comments(content: str, base_dir: Path, options: dict) -> str:
     content = "\n".join(result_lines)
 
     # Step 4: Restore verbatim content
-    content = _unmask_verbatim(content, verbatim_store)
+    content = unmask_verbatim(content, verbatim_store)
 
     return content
 
@@ -69,7 +69,7 @@ def _strip_line_comment(line: str) -> str | None:
     return line
 
 
-def _mask_verbatim(content: str) -> tuple[str, dict[str, str]]:
+def mask_verbatim(content: str) -> tuple[str, dict[str, str]]:
     """Replace verbatim environments and \\verb|...| with placeholders."""
     store: dict[str, str] = {}
     counter = 0
@@ -85,7 +85,7 @@ def _mask_verbatim(content: str) -> tuple[str, dict[str, str]]:
     content = _VERB_INLINE_RE.sub(replace_verb, content)
 
     # Mask verbatim environments
-    for env in _VERBATIM_ENVS:
+    for env in VERBATIM_ENVS:
         pattern = re.compile(
             rf"\\begin\{{{env}\}}.*?\\end\{{{env}\}}", re.DOTALL
         )
@@ -102,7 +102,7 @@ def _mask_verbatim(content: str) -> tuple[str, dict[str, str]]:
     return content, store
 
 
-def _unmask_verbatim(content: str, store: dict[str, str]) -> str:
+def unmask_verbatim(content: str, store: dict[str, str]) -> str:
     """Restore masked verbatim content."""
     for key, value in store.items():
         content = content.replace(key, value)

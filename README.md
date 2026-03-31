@@ -43,6 +43,7 @@ pip install -e ".[dev]"
 latex-llm-cleaner paper.tex                    # output to stdout
 latex-llm-cleaner paper.tex -o cleaned.tex     # output to file
 latex-llm-cleaner paper.tex --no-bibliography  # skip bib inlining
+latex-llm-cleaner paper.tex --no-macros        # skip macro expansion
 latex-llm-cleaner thesis.pdf -o thesis.md      # extract text from PDF
 latex-llm-cleaner thesis.pdf --ocr -o thesis.md  # OCR with LaTeX equation recovery
 latex-llm-cleaner slides.pptx -o slides.md       # extract slides from PPTX
@@ -58,6 +59,7 @@ Options:
   -o, --output FILE          Write to FILE (default: stdout)
   --no-flatten               Disable \input/\include flattening
   --no-comments              Disable comment removal
+  --no-macros                Disable macro expansion
   --no-bibliography          Disable bibliography inlining
   --no-figures               Disable figure summary substitution
   --figure-summary-suffix S  Suffix for summary files (default: _summary.txt)
@@ -109,12 +111,13 @@ The `--figure-summary-suffix` flag works here too (default: `_summary.txt`).
 
 ## Processing Pipeline (.tex files)
 
-The four steps run in this order (each operates on the output of the previous step):
+The five steps run in this order (each operates on the output of the previous step):
 
 1. **Flatten includes** — inline `\input{}`, `\include{}`, and `\subfile{}` recursively, with cycle detection
 2. **Remove comments** — strip `%` comments while respecting `\%` escapes and verbatim environments
-3. **Inline bibliography** — use a pre-compiled `.bbl` file if available (common in arXiv downloads), otherwise parse `.bib` files; replaces `\bibliography{}` with a `\begin{thebibliography}` block
-4. **Figure summary substitution** — replace `\includegraphics` with text descriptions when summary files are available
+3. **Expand macros** — substitute user-defined macros (`\newcommand`, `\renewcommand`, `\def`, `\DeclareMathOperator`) inline and remove definitions. Handles macros with 0–9 arguments, optional arguments with defaults, and nested macros via multi-pass expansion. `\newtheorem` and `\let` commands are preserved.
+4. **Inline bibliography** — use a pre-compiled `.bbl` file if available (common in arXiv downloads), otherwise parse `.bib` files; replaces `\bibliography{}` with a `\begin{thebibliography}` block
+5. **Figure summary substitution** — replace `\includegraphics` with text descriptions when summary files are available
 
 ## Figure Summaries
 

@@ -33,6 +33,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-comments", action="store_true", help="Disable comment removal"
     )
     parser.add_argument(
+        "--no-macros", action="store_true", help="Disable macro expansion"
+    )
+    parser.add_argument(
         "--no-figures", action="store_true", help="Disable figure summary substitution"
     )
     parser.add_argument(
@@ -118,6 +121,7 @@ def main(argv: list[str] | None = None) -> None:
         options = {
             "flatten": not args.no_flatten,
             "comments": not args.no_comments,
+            "macros": not args.no_macros,
             "bibliography": not args.no_bibliography,
             "figures": not args.no_figures,
             "figure_summary_suffix": args.figure_summary_suffix,

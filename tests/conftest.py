@@ -16,6 +16,7 @@ def default_options():
     return {
         "flatten": True,
         "comments": True,
+        "macros": True,
         "bibliography": True,
         "figures": True,
         "figure_summary_suffix": "_summary.txt",

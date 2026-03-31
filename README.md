@@ -60,6 +60,7 @@ Options:
   --no-flatten               Disable \input/\include flattening
   --no-comments              Disable comment removal
   --no-macros                Disable macro expansion
+  --keep-usepackage          Keep \usepackage lines (dropped by default)
   --no-bibliography          Disable bibliography inlining
   --no-figures               Disable figure summary substitution
   --figure-summary-suffix S  Suffix for summary files (default: _summary.txt)
@@ -115,7 +116,7 @@ The five steps run in this order (each operates on the output of the previous st
 
 1. **Flatten includes** — inline `\input{}`, `\include{}`, and `\subfile{}` recursively, with cycle detection
 2. **Remove comments** — strip `%` comments while respecting `\%` escapes and verbatim environments
-3. **Expand macros** — substitute user-defined macros (`\newcommand`, `\renewcommand`, `\def`, `\DeclareMathOperator`) inline and remove definitions. Handles macros with 0–9 arguments, optional arguments with defaults, and nested macros via multi-pass expansion. `\newtheorem` and `\let` commands are preserved.
+3. **Expand macros** — substitute user-defined macros (`\newcommand`, `\renewcommand`, `\def`, `\DeclareMathOperator`) inline and remove definitions. Handles macros with 0–9 arguments, optional arguments with defaults, and nested macros via multi-pass expansion. `\newtheorem` and `\let` commands are preserved. Also strips `\usepackage` lines (use `--keep-usepackage` to retain them).
 4. **Inline bibliography** — use a pre-compiled `.bbl` file if available (common in arXiv downloads), otherwise parse `.bib` files; replaces `\bibliography{}` with a `\begin{thebibliography}` block
 5. **Figure summary substitution** — replace `\includegraphics` with text descriptions when summary files are available
 

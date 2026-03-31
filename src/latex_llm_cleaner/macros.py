@@ -53,6 +53,10 @@ def expand_macros(content: str, base_dir: Path, options: dict) -> str:
         r"\\(?:Declare|Set)MathAlphabet\{[^}]*\}.*\n?", "", content
     )
 
+    # Strip \usepackage lines unless told to keep them
+    if not options.get("keep_usepackage", False):
+        content = re.sub(r"\\usepackage\s*(\[[^\]]*\])?\s*\{[^}]*\}\s*\n?", "", content)
+
     # Multi-pass expansion
     max_passes = 10
     for pass_num in range(max_passes):

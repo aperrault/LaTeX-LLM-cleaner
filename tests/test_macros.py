@@ -343,3 +343,38 @@ class TestEdgeCases:
         content = "\\let\\ab\\allowbreak\n\\ab"
         result = expand_macros(content, Path("."), opts)
         assert "\\let\\ab\\allowbreak" in result
+
+
+# ---------------------------------------------------------------------------
+# \usepackage stripping
+# ---------------------------------------------------------------------------
+
+
+class TestUsepackageStripping:
+    def test_stripped_by_default(self, opts):
+        content = "\\usepackage{amsmath}\ntext"
+        result = expand_macros(content, Path("."), opts)
+        assert "\\usepackage" not in result
+        assert "text" in result
+
+    def test_with_options(self, opts):
+        content = "\\usepackage[utf8]{inputenc}\ntext"
+        result = expand_macros(content, Path("."), opts)
+        assert "\\usepackage" not in result
+
+    def test_keep_usepackage_flag(self, opts):
+        opts["keep_usepackage"] = True
+        content = "\\usepackage{amsmath}\ntext"
+        result = expand_macros(content, Path("."), opts)
+        assert "\\usepackage{amsmath}" in result
+
+    def test_multiple_packages(self, opts):
+        content = (
+            "\\usepackage{amsmath}\n"
+            "\\usepackage[ruled]{algorithm2e}\n"
+            "\\usepackage{hyperref}\n"
+            "text"
+        )
+        result = expand_macros(content, Path("."), opts)
+        assert "\\usepackage" not in result
+        assert "text" in result

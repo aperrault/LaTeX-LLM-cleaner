@@ -52,6 +52,7 @@ def test_all_disabled():
     options = {
         "flatten": False,
         "comments": False,
+        "macros": False,
         "bibliography": False,
         "figures": False,
         "figure_summary_suffix": "_summary.txt",

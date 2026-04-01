@@ -101,13 +101,13 @@ Equations stored as Office MathML (OMML) in the presentation are passed through 
 
 ### Image summaries for PPTX
 
-Since images are embedded in PPTX files (no file paths), summaries use a slide/image numbering convention. Place summary files in the same directory as the `.pptx`:
+Since images are embedded in PPTX files (no file paths), summaries use a naming convention based on the PPTX filename plus slide/image numbering. Place summary files in the same directory as the `.pptx`:
 
 ```
 slides.pptx
-slide1_image1_summary.txt    ← first image on slide 1
-slide3_image1_summary.txt    ← first image on slide 3
-slide3_image2_summary.txt    ← second image on slide 3
+slides_slide1_image1_summary.txt    ← first image on slide 1
+slides_slide3_image1_summary.txt    ← first image on slide 3
+slides_slide3_image2_summary.txt    ← second image on slide 3
 ```
 
 The `--figure-summary-suffix` flag works here too (default: `_summary.txt`).

@@ -133,7 +133,7 @@ def test_image_summary_lookup(tmp_path):
     img_path = tmp_path / "tiny.png"
     _create_tiny_png(img_path)
 
-    summary_path = tmp_path / "slide1_image1_summary.txt"
+    summary_path = tmp_path / "test_slide1_image1_summary.txt"
     summary_path.write_text("A bar chart showing results.")
 
     pptx_path = tmp_path / "test.pptx"

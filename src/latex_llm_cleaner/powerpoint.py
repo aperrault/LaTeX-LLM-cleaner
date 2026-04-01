@@ -20,11 +20,13 @@ def extract_text_from_pptx(
     """Extract text from a PPTX as markdown."""
     prs = Presentation(str(path))
     base_dir = path.parent.resolve()
+    pptx_stem = path.stem
     slides_md = []
 
     for slide_num, slide in enumerate(prs.slides, start=1):
         md = _slide_to_markdown(
-            slide, slide_num, notes, figure_summary_suffix, base_dir, encoding, verbose
+            slide, slide_num, notes, figure_summary_suffix, base_dir, encoding,
+            verbose, pptx_stem,
         )
         slides_md.append(md)
 
@@ -32,7 +34,8 @@ def extract_text_from_pptx(
 
 
 def _slide_to_markdown(
-    slide, slide_num, notes, figure_summary_suffix, base_dir, encoding, verbose
+    slide, slide_num, notes, figure_summary_suffix, base_dir, encoding, verbose,
+    pptx_stem,
 ):
     """Convert a single slide to markdown."""
     # Title
@@ -56,7 +59,7 @@ def _slide_to_markdown(
             continue
         text, image_counter = _shape_to_text(
             shape, slide_num, image_counter, base_dir,
-            figure_summary_suffix, encoding, verbose,
+            figure_summary_suffix, encoding, verbose, pptx_stem,
         )
         if text:
             parts.append(text)
@@ -72,7 +75,7 @@ def _slide_to_markdown(
 
 
 def _shape_to_text(shape, slide_num, image_counter, base_dir,
-                   figure_summary_suffix, encoding, verbose):
+                   figure_summary_suffix, encoding, verbose, pptx_stem):
     """Convert a shape to text. Returns (text, updated_image_counter)."""
     # Group shape — recurse
     if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
@@ -80,7 +83,7 @@ def _shape_to_text(shape, slide_num, image_counter, base_dir,
         for child in shape.shapes:
             text, image_counter = _shape_to_text(
                 child, slide_num, image_counter, base_dir,
-                figure_summary_suffix, encoding, verbose,
+                figure_summary_suffix, encoding, verbose, pptx_stem,
             )
             if text:
                 group_parts.append(text)
@@ -94,13 +97,14 @@ def _shape_to_text(shape, slide_num, image_counter, base_dir,
     if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
         image_counter += 1
         summary = _find_image_summary(
-            base_dir, slide_num, image_counter, figure_summary_suffix, encoding
+            base_dir, pptx_stem, slide_num, image_counter,
+            figure_summary_suffix, encoding,
         )
         if summary:
             return f"[Image: {summary}]", image_counter
         if verbose:
             print(
-                f"Warning: no summary found for slide{slide_num}_image{image_counter}",
+                f"Warning: no summary found for {pptx_stem}_slide{slide_num}_image{image_counter}",
                 file=sys.stderr,
             )
         return "[Image]", image_counter
@@ -159,9 +163,9 @@ def _table_to_markdown(table):
     return "\n".join(rows)
 
 
-def _find_image_summary(base_dir, slide_num, image_index, suffix, encoding):
-    """Look for slide{N}_image{M}{suffix} in base_dir."""
-    stem = f"slide{slide_num}_image{image_index}"
+def _find_image_summary(base_dir, pptx_stem, slide_num, image_index, suffix, encoding):
+    """Look for {pptx_stem}_slide{N}_image{M}{suffix} in base_dir."""
+    stem = f"{pptx_stem}_slide{slide_num}_image{image_index}"
     summary_path = base_dir / (stem + suffix)
     if summary_path.is_file():
         return summary_path.read_text(encoding=encoding).strip()

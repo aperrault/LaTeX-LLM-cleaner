@@ -3,6 +3,7 @@
 import mimetypes
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from pathlib import Path
 
@@ -20,6 +21,8 @@ _PROMPT = (
 )
 
 _MODEL = "gemini-3.1-flash-lite-preview"
+
+_MAX_WORKERS = 4
 
 
 def _retry_with_backoff(max_retries=3, base_delay=10, max_delay=60):
@@ -63,6 +66,11 @@ def _retry_with_backoff(max_retries=3, base_delay=10, max_delay=60):
         return wrapper
 
     return decorator
+
+
+def _print_progress(done: int, total: int) -> None:
+    """Print an in-place progress counter to stderr."""
+    print(f"\r  Summarizing: {done}/{total} done", end="", file=sys.stderr, flush=True)
 
 
 def _resolve_image_path(base_dir: Path, img_path_str: str) -> Path | None:
@@ -131,32 +139,23 @@ def auto_summarize_figures(content: str, base_dir: Path, options: dict) -> str:
     suffix = options.get("figure_summary_suffix", "_summary.txt")
     encoding = options.get("encoding", "utf-8")
 
-    # Collect unique image paths
+    # Collect unique image paths that need summaries
     seen: set[str] = set()
-    image_paths: list[str] = []
+    work_items: list[tuple[str, Path, Path]] = []  # (label, image_path, summary_path)
+    skipped = 0
     for m in _INCLUDEGRAPHICS_RE.finditer(content):
         img_path_str = m.group(1).strip()
-        if img_path_str not in seen:
-            seen.add(img_path_str)
-            image_paths.append(img_path_str)
+        if img_path_str in seen:
+            continue
+        seen.add(img_path_str)
 
-    if not image_paths:
-        if verbose:
-            print("  No figures found to summarize.", file=sys.stderr)
-        return content
-
-    client = genai.Client(api_key=api_key)
-    generated = 0
-
-    for img_path_str in image_paths:
-        # Skip if summary already exists
         existing = _find_summary(base_dir, img_path_str, suffix, encoding)
         if existing is not None:
             if verbose:
                 print(f"  Skipping {img_path_str} (summary exists)", file=sys.stderr)
+            skipped += 1
             continue
 
-        # Resolve actual image file
         image_path = _resolve_image_path(base_dir, img_path_str)
         if image_path is None:
             if verbose:
@@ -166,35 +165,51 @@ def auto_summarize_figures(content: str, base_dir: Path, options: dict) -> str:
                 )
             continue
 
-        # Generate summary
-        if verbose:
-            print(f"  Generating summary for {img_path_str}...", file=sys.stderr)
-
-        try:
-            summary_text = _call_gemini(client, image_path, _PROMPT)
-        except Exception as e:
-            print(
-                f"  Warning: API error for {img_path_str}: {e}",
-                file=sys.stderr,
-            )
-            continue
-
-        # Write summary file
         if image_path.suffix.lower() in _IMAGE_EXTENSIONS:
             stem_path = image_path.with_suffix("")
         else:
             stem_path = image_path
         summary_path = Path(str(stem_path) + suffix)
-        summary_path.write_text(summary_text, encoding=encoding)
-        generated += 1
+        work_items.append((img_path_str, image_path, summary_path))
 
+    if not work_items:
         if verbose:
-            print(f"  Wrote {summary_path}", file=sys.stderr)
+            print("  No figures found to summarize.", file=sys.stderr)
+        return content
 
+    client = genai.Client(api_key=api_key)
+    total = len(work_items)
+    generated = 0
+
+    _print_progress(0, total)
+
+    def _do_one(item):
+        label, image_path, summary_path = item
+        summary_text = _call_gemini(client, image_path, _PROMPT)
+        summary_path.write_text(summary_text, encoding=encoding)
+        return label, summary_path
+
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
+        futures = {pool.submit(_do_one, item): item for item in work_items}
+        for future in as_completed(futures):
+            label, _, _ = futures[future]
+            try:
+                _, summary_path = future.result()
+                generated += 1
+                if verbose:
+                    print(f"\r  Wrote {summary_path}" + " " * 20, file=sys.stderr)
+            except Exception as e:
+                print(
+                    f"\r  Warning: API error for {label}: {e}" + " " * 20,
+                    file=sys.stderr,
+                )
+            _print_progress(generated, total)
+
+    print(file=sys.stderr)  # newline after progress
     if verbose:
         print(
             f"  Generated {generated} summary file(s) "
-            f"({len(image_paths) - generated} skipped).",
+            f"({skipped} skipped).",
             file=sys.stderr,
         )
 
@@ -204,8 +219,8 @@ def auto_summarize_figures(content: str, base_dir: Path, options: dict) -> str:
 def auto_summarize_pptx(path: Path, options: dict) -> None:
     """Generate summary files for PPTX images that lack them.
 
-    Writes slide{N}_image{M}_summary.txt files next to the PPTX so the
-    existing extraction pipeline picks them up.
+    Writes {pptx_stem}_slide{N}_image{M}_summary.txt files next to the PPTX
+    so the existing extraction pipeline picks them up.
     """
     from pptx import Presentation
     from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -222,25 +237,28 @@ def auto_summarize_pptx(path: Path, options: dict) -> None:
     suffix = options.get("figure_summary_suffix", "_summary.txt")
     encoding = options.get("encoding", "utf-8")
     base_dir = path.parent.resolve()
+    pptx_stem = path.stem
 
     client = genai.Client(api_key=api_key)
     prs = Presentation(str(path))
-    generated = 0
+
+    # First pass: collect all work items
+    work_items: list[tuple[str, bytes, str, Path]] = []  # (stem, blob, mime, summary_path)
     skipped = 0
 
-    def _process_shape(shape, slide_num, image_counter):
-        nonlocal generated, skipped
+    def _collect_shape(shape, slide_num, image_counter):
+        nonlocal skipped
 
         if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
             for child in shape.shapes:
-                image_counter = _process_shape(child, slide_num, image_counter)
+                image_counter = _collect_shape(child, slide_num, image_counter)
             return image_counter
 
         if shape.shape_type != MSO_SHAPE_TYPE.PICTURE:
             return image_counter
 
         image_counter += 1
-        stem = f"slide{slide_num}_image{image_counter}"
+        stem = f"{pptx_stem}_slide{slide_num}_image{image_counter}"
         summary_path = base_dir / (stem + suffix)
 
         if summary_path.is_file():
@@ -249,33 +267,55 @@ def auto_summarize_pptx(path: Path, options: dict) -> None:
             skipped += 1
             return image_counter
 
-        if verbose:
-            print(f"  Generating summary for {stem}...", file=sys.stderr)
-
-        try:
-            image_bytes = shape.image.blob
-            content_type = shape.image.content_type
-            summary_text = _call_gemini_bytes(client, image_bytes, content_type, _PROMPT)
-        except Exception as e:
-            print(f"  Warning: API error for {stem}: {e}", file=sys.stderr)
-            return image_counter
-
-        summary_path.write_text(summary_text, encoding=encoding)
-        generated += 1
-
-        if verbose:
-            print(f"  Wrote {summary_path}", file=sys.stderr)
-
+        work_items.append((
+            stem,
+            shape.image.blob,
+            shape.image.content_type,
+            summary_path,
+        ))
         return image_counter
 
     for slide_num, slide in enumerate(prs.slides, start=1):
         image_counter = 0
         for shape in slide.shapes:
-            image_counter = _process_shape(shape, slide_num, image_counter)
+            image_counter = _collect_shape(shape, slide_num, image_counter)
 
+    if not work_items:
+        if verbose:
+            print("  No images found to summarize.", file=sys.stderr)
+        return
+
+    total = len(work_items)
+    generated = 0
+
+    _print_progress(0, total)
+
+    def _do_one(item):
+        stem, image_bytes, content_type, summary_path = item
+        summary_text = _call_gemini_bytes(client, image_bytes, content_type, _PROMPT)
+        summary_path.write_text(summary_text, encoding=encoding)
+        return stem, summary_path
+
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
+        futures = {pool.submit(_do_one, item): item for item in work_items}
+        for future in as_completed(futures):
+            stem = futures[future][0]
+            try:
+                _, summary_path = future.result()
+                generated += 1
+                if verbose:
+                    print(f"\r  Wrote {summary_path}" + " " * 20, file=sys.stderr)
+            except Exception as e:
+                print(
+                    f"\r  Warning: API error for {stem}: {e}" + " " * 20,
+                    file=sys.stderr,
+                )
+            _print_progress(generated, total)
+
+    print(file=sys.stderr)  # newline after progress
     if verbose:
-        total = generated + skipped
+        total_images = generated + skipped
         print(
-            f"  Generated {generated} summary file(s) ({skipped} skipped, {total} total images).",
+            f"  Generated {generated} summary file(s) ({skipped} skipped, {total_images} total images).",
             file=sys.stderr,
         )

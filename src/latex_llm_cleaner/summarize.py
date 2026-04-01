@@ -6,6 +6,9 @@ import time
 from functools import wraps
 from pathlib import Path
 
+from google import genai
+from google.genai import types
+
 from .figures import _INCLUDEGRAPHICS_RE, _IMAGE_EXTENSIONS, _find_summary
 
 _PROMPT = (
@@ -88,8 +91,6 @@ def _get_mime_type(image_path: Path) -> str:
 @_retry_with_backoff()
 def _call_gemini_bytes(client, image_bytes: bytes, mime_type: str, prompt: str) -> str:
     """Send image bytes + prompt to Gemini, return generated text."""
-    from google.genai import types  # noqa: E402
-
     response = client.models.generate_content(
         model=_MODEL,
         contents=[
@@ -118,16 +119,6 @@ def auto_summarize_figures(content: str, base_dir: Path, options: dict) -> str:
     the content string unchanged.  The subsequent substitute_figures step
     will pick up the newly created summaries.
     """
-    try:
-        from google import genai  # noqa: E402
-    except ImportError:
-        print(
-            "Error: google-genai is required for --auto-summarize.\n"
-            "Install it with: pip install 'latex-llm-cleaner[summarize]'",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     api_key = options.get("google_api_key")
     if not api_key:
         print(
@@ -216,16 +207,6 @@ def auto_summarize_pptx(path: Path, options: dict) -> None:
     Writes slide{N}_image{M}_summary.txt files next to the PPTX so the
     existing extraction pipeline picks them up.
     """
-    try:
-        from google import genai  # noqa: E402
-    except ImportError:
-        print(
-            "Error: google-genai is required for --auto-summarize.\n"
-            "Install it with: pip install 'latex-llm-cleaner[summarize]'",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     from pptx import Presentation
     from pptx.enum.shapes import MSO_SHAPE_TYPE
 

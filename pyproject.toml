@@ -1,6 +1,6 @@
 [project]
 name = "latex-llm-cleaner"
-version = "0.11.0"
+version = "0.11.1"
 description = "Flatten and clean LaTeX, PDF, and PPTX files for LLM consumption"
 license = "MIT"
 requires-python = ">=3.10"
@@ -22,6 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "bibtexparser>=2.0.0b7",
+    "google-genai>=1.0.0",
     "pymupdf4llm>=0.0.17",
     "python-pptx>=0.6.21",
 ]
@@ -33,7 +34,6 @@ Issues = "https://github.com/aperrault/LaTeX-LLM-cleaner/issues"
 
 [project.optional-dependencies]
 ocr = ["surya-ocr>=0.17.0", "pymupdf>=1.24.0", "transformers<5", "requests"]
-summarize = ["google-genai>=1.0.0"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]

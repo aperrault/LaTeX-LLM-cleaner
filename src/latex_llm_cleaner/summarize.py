@@ -100,13 +100,19 @@ _GEMINI_SUPPORTED_MIMES = {"image/png", "image/jpeg", "image/webp", "image/heic"
 
 
 def _ensure_supported_format(image_bytes: bytes, mime_type: str) -> tuple[bytes, str]:
-    """Convert unsupported image formats (WMF, EMF, GIF, TIFF, BMP) to PNG."""
+    """Convert unsupported image formats (GIF, TIFF, BMP, etc.) to PNG.
+
+    Raises ValueError for formats that cannot be converted (e.g. WMF/EMF).
+    """
     if mime_type in _GEMINI_SUPPORTED_MIMES:
         return image_bytes, mime_type
     import pymupdf
 
-    pix = pymupdf.Pixmap(image_bytes)
-    return pix.tobytes("png"), "image/png"
+    try:
+        pix = pymupdf.Pixmap(image_bytes)
+        return pix.tobytes("png"), "image/png"
+    except Exception:
+        raise ValueError(f"unsupported image format: {mime_type}")
 
 
 @_retry_with_backoff()

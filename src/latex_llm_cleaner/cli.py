@@ -15,9 +15,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="latex-llm-cleaner",
         description="Flatten and clean LaTeX files for LLM consumption. "
         "Accepts .tex files (full pipeline), .pdf files (text extraction), "
-        "or .pptx files (slide extraction).",
+        ".pptx files (slide extraction), or .docx files (document extraction).",
     )
-    parser.add_argument("input_file", type=Path, help="Input .tex, .pdf, or .pptx file")
+    parser.add_argument("input_file", type=Path, help="Input .tex, .pdf, .pptx, or .docx file")
     parser.add_argument(
         "-o", "--output", type=Path, default=None, help="Output file (default: stdout)"
     )
@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--notes",
         action="store_true",
-        help="Include speaker notes in PPTX output (default: off)",
+        help="Include speaker notes (PPTX) or comments (DOCX) in output (default: off)",
     )
     parser.add_argument(
         "--ocr",
@@ -93,14 +93,54 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     if input_path.suffix.lower() == ".pdf":
+        if args.auto_summarize:
+            from .summarize import auto_summarize_pdf
+
+            auto_summarize_pdf(input_path, {
+                "google_api_key": args.google_api_key or os.environ.get("GOOGLE_API_KEY"),
+                "verbose": args.verbose,
+                "figure_summary_suffix": args.figure_summary_suffix,
+                "encoding": args.encoding,
+            })
         if args.ocr:
             if args.verbose:
                 print("PDF input detected, using Surya OCR...", file=sys.stderr)
-            result = extract_text_from_pdf_ocr(input_path, verbose=args.verbose)
+            result = extract_text_from_pdf_ocr(
+                input_path,
+                verbose=args.verbose,
+                figure_summary_suffix=args.figure_summary_suffix,
+                encoding=args.encoding,
+            )
         else:
             if args.verbose:
                 print("PDF input detected, extracting text...", file=sys.stderr)
-            result = extract_text_from_pdf(input_path, verbose=args.verbose)
+            result = extract_text_from_pdf(
+                input_path,
+                verbose=args.verbose,
+                figure_summary_suffix=args.figure_summary_suffix,
+                encoding=args.encoding,
+            )
+    elif input_path.suffix.lower() == ".docx":
+        if args.auto_summarize:
+            from .summarize import auto_summarize_docx
+
+            auto_summarize_docx(input_path, {
+                "google_api_key": args.google_api_key or os.environ.get("GOOGLE_API_KEY"),
+                "verbose": args.verbose,
+                "figure_summary_suffix": args.figure_summary_suffix,
+                "encoding": args.encoding,
+            })
+        if args.verbose:
+            print("DOCX input detected, extracting text...", file=sys.stderr)
+        from .docx import extract_text_from_docx
+
+        result = extract_text_from_docx(
+            input_path,
+            verbose=args.verbose,
+            notes=args.notes,
+            figure_summary_suffix=args.figure_summary_suffix,
+            encoding=args.encoding,
+        )
     elif input_path.suffix.lower() == ".pptx":
         if args.auto_summarize:
             from .summarize import auto_summarize_pptx

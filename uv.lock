@@ -649,7 +649,7 @@ wheels = [
 
 [[package]]
 name = "latex-llm-cleaner"
-version = "0.11.2"
+version = "0.12.2"
 source = { editable = "." }
 dependencies = [
     { name = "bibtexparser" },

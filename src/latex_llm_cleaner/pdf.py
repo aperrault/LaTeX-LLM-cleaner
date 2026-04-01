@@ -10,7 +10,54 @@ import pymupdf4llm
 _DIACRITICS = "ˆˇ˜¯˙"
 
 
-def extract_text_from_pdf(path: Path, verbose: bool = False) -> str:
+_MIN_FIGURE_DIM = 64
+
+_PICTURE_MARKER_RE = re.compile(
+    r"\*\*==> picture \[(\d+) x (\d+)\] intentionally omitted <==\*\*"
+)
+
+
+def _find_pdf_image_summary(
+    base_dir: Path, pdf_stem: str, page_num: int, image_index: int,
+    suffix: str, encoding: str,
+) -> str | None:
+    """Look for {pdf_stem}_page{N}_image{M}{suffix} in base_dir."""
+    stem = f"{pdf_stem}_page{page_num}_image{image_index}"
+    summary_path = base_dir / (stem + suffix)
+    if summary_path.is_file():
+        return summary_path.read_text(encoding=encoding).strip()
+    return None
+
+
+def _replace_picture_markers(
+    text: str, base_dir: Path, pdf_stem: str, page_num: int,
+    suffix: str, encoding: str,
+) -> str:
+    """Replace significant picture markers with summaries if available."""
+    image_index = 0
+
+    def _replacer(m: re.Match) -> str:
+        nonlocal image_index
+        w, h = int(m.group(1)), int(m.group(2))
+        if w <= _MIN_FIGURE_DIM or h <= _MIN_FIGURE_DIM:
+            return m.group(0)  # keep small markers as-is
+        image_index += 1
+        summary = _find_pdf_image_summary(
+            base_dir, pdf_stem, page_num, image_index, suffix, encoding,
+        )
+        if summary:
+            return f"[Image: {summary}]"
+        return m.group(0)
+
+    return _PICTURE_MARKER_RE.sub(_replacer, text)
+
+
+def extract_text_from_pdf(
+    path: Path,
+    verbose: bool = False,
+    figure_summary_suffix: str = "_summary.txt",
+    encoding: str = "utf-8",
+) -> str:
     """Extract text from a PDF as markdown, preserving tables and structure."""
     if verbose:
         import fitz
@@ -19,11 +66,29 @@ def extract_text_from_pdf(path: Path, verbose: bool = False) -> str:
         print(f"  Extracting {doc.page_count} pages...", file=sys.stderr)
         doc.close()
 
-    md = pymupdf4llm.to_markdown(path)
+    chunks = pymupdf4llm.to_markdown(str(path), page_chunks=True)
+    base_dir = path.parent.resolve()
+    pdf_stem = path.stem
+
+    pages = []
+    for page_num, chunk in enumerate(chunks, start=1):
+        text = chunk["text"]
+        text = _replace_picture_markers(
+            text, base_dir, pdf_stem, page_num,
+            figure_summary_suffix, encoding,
+        )
+        pages.append(text)
+
+    md = "\n-----\n\n".join(pages)
     return _clean_markdown(md)
 
 
-def extract_text_from_pdf_ocr(path: Path, verbose: bool = False) -> str:
+def extract_text_from_pdf_ocr(
+    path: Path,
+    verbose: bool = False,
+    figure_summary_suffix: str = "_summary.txt",
+    encoding: str = "utf-8",
+) -> str:
     """Extract text from a PDF using Surya vision-based OCR.
 
     Recovers LaTeX equations from compiled PDFs by running OCR on rendered
@@ -74,6 +139,8 @@ def extract_text_from_pdf_ocr(path: Path, verbose: bool = False) -> str:
     predictions = rec(images, det_predictor=det)
 
     # Assemble into document text with column-aware ordering
+    base_dir = path.parent.resolve()
+    pdf_stem = path.stem
     pages_text = []
     for i, pred in enumerate(predictions):
         reordered = _reorder_text_lines(pred.text_lines, images[i].width)
@@ -85,7 +152,22 @@ def extract_text_from_pdf_ocr(path: Path, verbose: bool = False) -> str:
                 file=sys.stderr,
             )
         lines = [line.text for line in reordered]
-        pages_text.append("\n".join(lines))
+        page_text = "\n".join(lines)
+
+        # Append any image summaries for this page
+        page_num = i + 1
+        img_idx = 1
+        while True:
+            summary = _find_pdf_image_summary(
+                base_dir, pdf_stem, page_num, img_idx,
+                figure_summary_suffix, encoding,
+            )
+            if summary is None:
+                break
+            page_text += f"\n\n[Image: {summary}]"
+            img_idx += 1
+
+        pages_text.append(page_text)
 
     text = "\n\n".join(pages_text)
     return _convert_surya_markup(text)

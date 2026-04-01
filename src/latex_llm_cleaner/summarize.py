@@ -1,6 +1,7 @@
 """Auto-generate figure summaries using the Gemini vision API."""
 
 import mimetypes
+import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -259,7 +260,6 @@ def auto_summarize_pptx(path: Path, options: dict) -> None:
     base_dir = path.parent.resolve()
     pptx_stem = path.stem
 
-    client = genai.Client(api_key=api_key)
     prs = Presentation(str(path))
 
     # First pass: collect all work items
@@ -305,6 +305,119 @@ def auto_summarize_pptx(path: Path, options: dict) -> None:
             print("  No images found to summarize.", file=sys.stderr)
         return
 
+    _run_batch_summarize(work_items, api_key, encoding, verbose, skipped)
+
+
+# Minimum dimensions for a picture marker to be considered a real figure
+_MIN_FIGURE_DIM = 64
+
+_PICTURE_MARKER_RE = re.compile(
+    r"\*\*==> picture \[(\d+) x (\d+)\] intentionally omitted <==\*\*"
+)
+
+
+def auto_summarize_pdf(path: Path, options: dict) -> None:
+    """Generate summary files for significant figures in a PDF.
+
+    Extracts embedded images and cropped picture regions, sends them to
+    Gemini for summarization, and writes {pdf_stem}_page{N}_image{M}_summary.txt
+    files next to the PDF.
+    """
+    import fitz
+    import pymupdf4llm
+
+    api_key = options.get("google_api_key")
+    if not api_key:
+        print(
+            "Error: No Google API key found. Set GOOGLE_API_KEY or use --google-api-key.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    verbose = options.get("verbose", False)
+    suffix = options.get("figure_summary_suffix", "_summary.txt")
+    encoding = options.get("encoding", "utf-8")
+    base_dir = path.parent.resolve()
+    pdf_stem = path.stem
+
+    doc = fitz.open(path)
+    chunks = pymupdf4llm.to_markdown(str(path), page_chunks=True)
+
+    # Collect work items: (stem, image_bytes, mime_type, summary_path)
+    work_items: list[tuple[str, bytes, str, Path]] = []
+    skipped = 0
+
+    for page_num, chunk in enumerate(chunks, start=1):
+        page = doc[page_num - 1]
+
+        # Count significant picture markers on this page
+        markers = _PICTURE_MARKER_RE.findall(chunk["text"])
+        significant_markers = [
+            (int(w), int(h)) for w, h in markers
+            if int(w) > _MIN_FIGURE_DIM and int(h) > _MIN_FIGURE_DIM
+        ]
+
+        if not significant_markers:
+            continue
+
+        # Strategy: try embedded images first, fall back to picture box crops
+        embedded = []
+        for img_info in page.get_images(full=True):
+            xref = img_info[0]
+            base = doc.extract_image(xref)
+            if base["width"] > _MIN_FIGURE_DIM and base["height"] > _MIN_FIGURE_DIM:
+                ext = base["ext"]
+                mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
+                embedded.append((base["image"], mime))
+
+        # Get picture boxes for cropped rendering fallback
+        pic_boxes = [b for b in chunk["page_boxes"] if b["class"] == "picture"]
+
+        # Build image list: prefer embedded, supplement with cropped boxes
+        page_images: list[tuple[bytes, str]] = []
+        if embedded:
+            page_images.extend(embedded)
+        # If we have more significant markers than embedded images, use box crops
+        remaining = len(significant_markers) - len(embedded)
+        if remaining > 0 and pic_boxes:
+            for box in pic_boxes[:remaining]:
+                bbox = fitz.Rect(box["bbox"])
+                mat = fitz.Matrix(2, 2)
+                pix = page.get_pixmap(clip=bbox, matrix=mat)
+                page_images.append((pix.tobytes("png"), "image/png"))
+
+        # Create work items for each image on this page
+        for img_idx, (img_bytes, mime_type) in enumerate(page_images, start=1):
+            stem = f"{pdf_stem}_page{page_num}_image{img_idx}"
+            summary_path = base_dir / (stem + suffix)
+
+            if summary_path.is_file():
+                if verbose:
+                    print(f"  Skipping {stem} (summary exists)", file=sys.stderr)
+                skipped += 1
+                continue
+
+            work_items.append((stem, img_bytes, mime_type, summary_path))
+
+    doc.close()
+
+    if not work_items:
+        if verbose:
+            print("  No figures found to summarize.", file=sys.stderr)
+        return
+
+    _run_batch_summarize(work_items, api_key, encoding, verbose, skipped)
+
+
+def _run_batch_summarize(
+    work_items: list[tuple[str, bytes, str, Path]],
+    api_key: str,
+    encoding: str,
+    verbose: bool,
+    skipped: int,
+) -> None:
+    """Run Gemini summarization on a batch of (stem, bytes, mime, path) items."""
+    client = genai.Client(api_key=api_key)
     total = len(work_items)
     generated = 0
 
@@ -336,6 +449,96 @@ def auto_summarize_pptx(path: Path, options: dict) -> None:
     if verbose:
         total_images = generated + skipped
         print(
-            f"  Generated {generated} summary file(s) ({skipped} skipped, {total_images} total images).",
+            f"  Generated {generated} summary file(s) "
+            f"({skipped} skipped, {total_images} total images).",
             file=sys.stderr,
         )
+
+
+def auto_summarize_docx(path: Path, options: dict) -> None:
+    """Generate summary files for DOCX images that lack them.
+
+    Writes {docx_stem}_image{M}_summary.txt files next to the DOCX
+    so the existing extraction pipeline picks them up.
+    """
+    from lxml import etree
+
+    from docx import Document
+
+    _DML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    _WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+    _REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    _WML_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+    api_key = options.get("google_api_key")
+    if not api_key:
+        print(
+            "Error: No Google API key found. Set GOOGLE_API_KEY or use --google-api-key.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    verbose = options.get("verbose", False)
+    suffix = options.get("figure_summary_suffix", "_summary.txt")
+    encoding = options.get("encoding", "utf-8")
+    base_dir = path.parent.resolve()
+    docx_stem = path.stem
+
+    doc = Document(str(path))
+
+    # Walk body elements in the same order as docx.py extraction.
+    # Only count inline drawings (wp:inline), not anchor drawings
+    # (text boxes, floating decorations).
+    work_items: list[tuple[str, bytes, str, Path]] = []
+    skipped = 0
+    image_counter = 0
+
+    for child in doc.element.body:
+        tag = etree.QName(child.tag).localname
+        if tag != "p":
+            continue
+
+        for run in child.findall(f".//{{{_WML_NS}}}r"):
+            # Use descendant search since drawings may be inside
+            # mc:AlternateContent/mc:Choice wrappers.
+            for inline in run.findall(f".//{{{_WP_NS}}}inline"):
+                for blip in inline.findall(f".//{{{_DML_NS}}}blip"):
+                    image_counter += 1
+                    stem = f"{docx_stem}_image{image_counter}"
+                    summary_path = base_dir / (stem + suffix)
+
+                    if summary_path.is_file():
+                        if verbose:
+                            print(
+                                f"  Skipping {stem} (summary exists)",
+                                file=sys.stderr,
+                            )
+                        skipped += 1
+                        continue
+
+                    rId = blip.get(f"{{{_REL_NS}}}embed")
+                    if not rId:
+                        continue
+
+                    try:
+                        image_part = doc.part.rels[rId].target_part
+                        work_items.append((
+                            stem,
+                            image_part.blob,
+                            image_part.content_type,
+                            summary_path,
+                        ))
+                    except (KeyError, AttributeError) as e:
+                        if verbose:
+                            print(
+                                f"  Warning: could not extract image "
+                                f"for {stem}: {e}",
+                                file=sys.stderr,
+                            )
+
+    if not work_items:
+        if verbose:
+            print("  No images found to summarize.", file=sys.stderr)
+        return
+
+    _run_batch_summarize(work_items, api_key, encoding, verbose, skipped)

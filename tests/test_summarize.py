@@ -1,4 +1,4 @@
-"""Tests for auto_summarize_figures."""
+"""Tests for auto_summarize_figures and auto_summarize_pdf."""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -277,3 +277,102 @@ def test_deduplicates_images(tmp_path, options):
                 mod.auto_summarize_figures(content, tmp_path, options)
 
     assert mock_call.call_count == 1
+
+
+# --- PDF auto-summarization tests ---
+
+
+def _create_pdf_with_image(path: Path) -> None:
+    """Create a PDF with an embedded 200x200 image on page 1."""
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Text before figure.")
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 200), 1)
+    pix.set_rect(pix.irect, (255, 0, 0, 255))
+    page.insert_image(fitz.Rect(100, 150, 400, 450), stream=pix.tobytes("png"))
+    page.insert_text((72, 500), "Text after figure.")
+    doc.save(str(path))
+    doc.close()
+
+
+@pytest.fixture
+def pdf_options():
+    return {
+        "figure_summary_suffix": "_summary.txt",
+        "encoding": "utf-8",
+        "verbose": False,
+        "google_api_key": "fake-key",
+    }
+
+
+def test_auto_summarize_pdf_generates_summaries(tmp_path, pdf_options):
+    """Should generate summary files for embedded images."""
+    pdf_path = tmp_path / "doc.pdf"
+    _create_pdf_with_image(pdf_path)
+
+    mock_genai = MagicMock()
+    mock_genai.Client.return_value = MagicMock()
+
+    with patch(
+        "latex_llm_cleaner.summarize._call_gemini_bytes",
+        return_value="A red square image.",
+    ):
+        import latex_llm_cleaner.summarize as mod
+
+        with patch.dict(mod.auto_summarize_pdf.__globals__, {"genai": mock_genai}):
+            mod.auto_summarize_pdf(pdf_path, pdf_options)
+
+    summary_path = tmp_path / "doc_page1_image1_summary.txt"
+    assert summary_path.is_file()
+    assert "red square" in summary_path.read_text()
+
+
+def test_auto_summarize_pdf_skips_existing(tmp_path, pdf_options):
+    """Should skip images that already have summary files."""
+    pdf_path = tmp_path / "doc.pdf"
+    _create_pdf_with_image(pdf_path)
+
+    # Pre-create summary
+    summary_path = tmp_path / "doc_page1_image1_summary.txt"
+    summary_path.write_text("Existing summary.")
+
+    mock_genai = MagicMock()
+    mock_genai.Client.return_value = MagicMock()
+
+    with patch(
+        "latex_llm_cleaner.summarize._call_gemini_bytes",
+    ) as mock_call:
+        import latex_llm_cleaner.summarize as mod
+
+        with patch.dict(mod.auto_summarize_pdf.__globals__, {"genai": mock_genai}):
+            mod.auto_summarize_pdf(pdf_path, pdf_options)
+
+    mock_call.assert_not_called()
+    assert summary_path.read_text() == "Existing summary."
+
+
+def test_auto_summarize_pdf_skips_text_only(tmp_path, pdf_options):
+    """Should not generate summaries for text-only PDFs."""
+    import fitz
+
+    pdf_path = tmp_path / "text.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Just text, no figures.")
+    doc.save(str(pdf_path))
+    doc.close()
+
+    mock_genai = MagicMock()
+    mock_genai.Client.return_value = MagicMock()
+
+    with patch(
+        "latex_llm_cleaner.summarize._call_gemini_bytes",
+    ) as mock_call:
+        import latex_llm_cleaner.summarize as mod
+
+        with patch.dict(mod.auto_summarize_pdf.__globals__, {"genai": mock_genai}):
+            mod.auto_summarize_pdf(pdf_path, pdf_options)
+
+    mock_call.assert_not_called()

@@ -1,14 +1,14 @@
 [project]
 name = "latex-llm-cleaner"
 version = "0.12.2"
-description = "Flatten and clean LaTeX, PDF, and PPTX files for LLM consumption"
+description = "Flatten and clean LaTeX, PDF, PPTX, and DOCX files for LLM consumption"
 license = "MIT"
 requires-python = ">=3.10"
 readme = "README.md"
 authors = [
     { name = "Andrew Perrault", email = "aperrau@gmail.com" },
 ]
-keywords = ["latex", "llm", "arxiv", "flatten", "clean", "bibliography", "pptx", "powerpoint"]
+keywords = ["latex", "llm", "arxiv", "flatten", "clean", "bibliography", "pptx", "powerpoint", "docx", "word"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -24,6 +24,7 @@ dependencies = [
     "bibtexparser>=2.0.0b7",
     "google-genai>=1.0.0",
     "pymupdf4llm>=0.0.17",
+    "python-docx>=1.1.0",
     "python-pptx>=0.6.21",
 ]
 

@@ -96,9 +96,23 @@ def _get_mime_type(image_path: Path) -> str:
     return mime or "application/octet-stream"
 
 
+_GEMINI_SUPPORTED_MIMES = {"image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"}
+
+
+def _ensure_supported_format(image_bytes: bytes, mime_type: str) -> tuple[bytes, str]:
+    """Convert unsupported image formats (WMF, EMF, GIF, TIFF, BMP) to PNG."""
+    if mime_type in _GEMINI_SUPPORTED_MIMES:
+        return image_bytes, mime_type
+    import pymupdf
+
+    pix = pymupdf.Pixmap(image_bytes)
+    return pix.tobytes("png"), "image/png"
+
+
 @_retry_with_backoff()
 def _call_gemini_bytes(client, image_bytes: bytes, mime_type: str, prompt: str) -> str:
     """Send image bytes + prompt to Gemini, return generated text."""
+    image_bytes, mime_type = _ensure_supported_format(image_bytes, mime_type)
     response = client.models.generate_content(
         model=_MODEL,
         contents=[

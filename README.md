@@ -20,14 +20,16 @@ pip install 'latex-llm-cleaner[ocr]'
 
 ```bash
 # Recommended — handles extras natively:
-uv tool install latex-llm-cleaner
-uv tool install 'latex-llm-cleaner[ocr]'
+uv tool install --prerelease=allow latex-llm-cleaner
+uv tool install --prerelease=allow 'latex-llm-cleaner[ocr]'
 
 # Alternative (pipx):
 pipx install latex-llm-cleaner
 # For OCR with pipx, inject the heavy dependencies:
 pipx inject latex-llm-cleaner surya-ocr 'transformers<5'
 ```
+
+> **Note:** The `--prerelease=allow` flag is needed because bibtexparser v2 is still in beta. `pip install` handles this automatically.
 
 > **Note:** OCR requires `libjpeg` headers. On macOS: `brew install jpeg`
 

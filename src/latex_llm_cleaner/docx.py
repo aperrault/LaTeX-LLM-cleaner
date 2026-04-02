@@ -10,6 +10,7 @@ _WML_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _DML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 _REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_OMML_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 _COMMENTS_RELTYPE = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
 )
@@ -71,8 +72,9 @@ def _paragraph_to_markdown(
     # Check heading style
     heading_level = _get_heading_level(element)
 
-    # Process runs for text, formatting, and images
-    run_parts: list[str] = []
+    # Collect (text, fmt) pairs then merge adjacent runs with same formatting.
+    # fmt is one of: None, "bold", "italic", "bolditalic", "raw" (pre-formatted)
+    spans: list[tuple[str, str | None]] = []
 
     for child in element:
         child_tag = etree.QName(child.tag).localname
@@ -94,7 +96,7 @@ def _paragraph_to_markdown(
                             base_dir, docx_stem, image_counter, suffix, encoding,
                         )
                         if summary:
-                            run_parts.append(f"[Image: {summary}]")
+                            spans.append((f"[Image: {summary}]", "raw"))
                         else:
                             if verbose:
                                 print(
@@ -102,19 +104,33 @@ def _paragraph_to_markdown(
                                     f"{docx_stem}_image{image_counter}",
                                     file=sys.stderr,
                                 )
-                            run_parts.append("[Image]")
+                            spans.append(("[Image]", "raw"))
             if not has_inline_image:
-                # Extract text with formatting
-                text = _run_to_text(child)
-                if text:
-                    run_parts.append(text)
+                pair = _run_to_pair(child)
+                if pair:
+                    spans.append(pair)
 
         elif child_tag == "hyperlink":
-            # Extract text from hyperlink runs
             for r in child.findall(f"{{{_WML_NS}}}r"):
-                text = _run_to_text(r)
-                if text:
-                    run_parts.append(text)
+                pair = _run_to_pair(r)
+                if pair:
+                    spans.append(pair)
+
+        elif child_tag in ("oMathPara", "oMath"):
+            math_xml = etree.tostring(child, encoding="unicode")
+            spans.append((math_xml, "raw"))
+
+    # Merge adjacent spans with identical formatting, then wrap
+    run_parts: list[str] = []
+    for text, fmt in _merge_spans(spans):
+        if heading_level is not None or fmt is None or fmt == "raw":
+            run_parts.append(text)
+        elif fmt == "bolditalic":
+            run_parts.append(f"***{text}***")
+        elif fmt == "bold":
+            run_parts.append(f"**{text}**")
+        elif fmt == "italic":
+            run_parts.append(f"*{text}*")
 
     result = "".join(run_parts).strip()
     if not result:
@@ -126,8 +142,8 @@ def _paragraph_to_markdown(
     return result, image_counter
 
 
-def _run_to_text(run_element):
-    """Extract text from a run element, applying bold/italic formatting."""
+def _run_to_pair(run_element) -> tuple[str, str | None] | None:
+    """Return (text, fmt) for a run element, or None if empty."""
     texts = []
     for child in run_element:
         child_tag = etree.QName(child.tag).localname
@@ -142,8 +158,8 @@ def _run_to_text(run_element):
         return None
 
     text = "".join(texts)
+    fmt = None
 
-    # Check formatting properties
     rPr = run_element.find(f"{{{_WML_NS}}}rPr")
     if rPr is not None:
         bold = rPr.find(f"{{{_WML_NS}}}b")
@@ -153,13 +169,27 @@ def _run_to_text(run_element):
             italic is not None and italic.get(f"{{{_WML_NS}}}val", "true") != "false"
         )
         if is_bold and is_italic:
-            text = f"***{text}***"
+            fmt = "bolditalic"
         elif is_bold:
-            text = f"**{text}**"
+            fmt = "bold"
         elif is_italic:
-            text = f"*{text}*"
+            fmt = "italic"
 
-    return text
+    return text, fmt
+
+
+def _merge_spans(spans):
+    """Merge adjacent spans with identical formatting."""
+    if not spans:
+        return
+    cur_text, cur_fmt = spans[0]
+    for text, fmt in spans[1:]:
+        if fmt == cur_fmt and fmt != "raw":
+            cur_text += text
+        else:
+            yield cur_text, cur_fmt
+            cur_text, cur_fmt = text, fmt
+    yield cur_text, cur_fmt
 
 
 def _get_heading_level(paragraph_element) -> int | None:
@@ -187,8 +217,16 @@ def _table_to_markdown(tbl_element):
     for tr in tbl_element.findall(f"{{{_WML_NS}}}tr"):
         cells = []
         for tc in tr.findall(f"{{{_WML_NS}}}tc"):
+            cell_parts = []
+            # Collect plain text
             texts = tc.findall(f".//{{{_WML_NS}}}t")
-            cell_text = " ".join(t.text or "" for t in texts).strip()
+            plain = " ".join(t.text or "" for t in texts).strip()
+            if plain:
+                cell_parts.append(plain)
+            # Collect OMML math elements
+            for omath in tc.findall(f".//{{{_OMML_NS}}}oMath"):
+                cell_parts.append(etree.tostring(omath, encoding="unicode"))
+            cell_text = " ".join(cell_parts)
             cells.append(cell_text.replace("|", "\\|"))
         rows.append("| " + " | ".join(cells) + " |")
 

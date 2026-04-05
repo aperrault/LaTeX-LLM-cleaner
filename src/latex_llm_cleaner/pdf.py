@@ -83,11 +83,32 @@ def extract_text_from_pdf(
     return _clean_markdown(md)
 
 
-def _filter_figure_lines(text_lines: list, picture_bboxes: list[list[float]]) -> list:
-    """Remove OCR text lines that fall inside picture bounding boxes.
+def _extract_table_markdowns(chunk_text: str) -> list[str]:
+    """Extract contiguous blocks of pipe-delimited markdown table lines.
 
-    A line is considered inside a picture if its vertical center is within
-    the picture bbox and its horizontal span overlaps with it.
+    Returns a list of table blocks (each a multi-line string), ordered
+    top-to-bottom as they appear in the text.
+    """
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in chunk_text.split("\n"):
+        if line.strip().startswith("|"):
+            current.append(line)
+        else:
+            if current:
+                blocks.append(current)
+                current = []
+    if current:
+        blocks.append(current)
+    return ["\n".join(b) for b in blocks]
+
+
+def _filter_figure_lines(text_lines: list, picture_bboxes: list[list[float]]) -> list:
+    """Remove OCR text lines that fall inside region bounding boxes.
+
+    A line is considered inside a region if its vertical center is within
+    the bbox and its horizontal span overlaps with it. Works for both
+    picture and table regions.
     """
     if not picture_bboxes:
         return text_lines
@@ -153,10 +174,12 @@ def extract_text_from_pdf_ocr(
     if verbose:
         print(f"  OCR processing {page_count} pages...", file=sys.stderr)
 
-    # Get picture bounding boxes per page from pymupdf4llm structure analysis
+    # Get picture/table bounding boxes per page from pymupdf4llm structure analysis
     chunks = pymupdf4llm.to_markdown(str(path), page_chunks=True)
     zoom = 2  # must match the rendering matrix below
     page_picture_bboxes: list[list[list[float]]] = []
+    page_table_bboxes: list[list[list[float]]] = []
+    page_table_markdowns: list[list[str]] = []
     for chunk in chunks:
         pic_boxes = [
             [b["bbox"][0] * zoom, b["bbox"][1] * zoom,
@@ -167,6 +190,16 @@ def extract_text_from_pdf_ocr(
             and (b["bbox"][3] - b["bbox"][1]) > _MIN_FIGURE_DIM
         ]
         page_picture_bboxes.append(pic_boxes)
+        tbl_boxes = [
+            [b["bbox"][0] * zoom, b["bbox"][1] * zoom,
+             b["bbox"][2] * zoom, b["bbox"][3] * zoom]
+            for b in chunk.get("page_boxes", [])
+            if b["class"] == "table"
+        ]
+        page_table_bboxes.append(tbl_boxes)
+        page_table_markdowns.append(
+            _extract_table_markdowns(chunk["text"]) if tbl_boxes else []
+        )
 
     # Render all pages as images
     images = []
@@ -188,44 +221,53 @@ def extract_text_from_pdf_ocr(
     for i, pred in enumerate(predictions):
         reordered = _reorder_text_lines(pred.text_lines, images[i].width)
         pic_bboxes = page_picture_bboxes[i] if i < len(page_picture_bboxes) else []
+        tbl_bboxes = page_table_bboxes[i] if i < len(page_table_bboxes) else []
+        tbl_markdowns = page_table_markdowns[i] if i < len(page_table_markdowns) else []
 
-        # Filter out OCR lines inside figure regions
-        if pic_bboxes:
+        # Filter out OCR lines inside figure and table regions
+        all_region_bboxes = pic_bboxes + tbl_bboxes
+        if all_region_bboxes:
             before_count = len(reordered)
-            reordered = _filter_figure_lines(reordered, pic_bboxes)
-            fig_removed = before_count - len(reordered)
+            reordered = _filter_figure_lines(reordered, all_region_bboxes)
+            region_removed = before_count - len(reordered)
         else:
-            fig_removed = 0
+            region_removed = 0
 
         if verbose:
-            removed = len(pred.text_lines) - len(reordered) - fig_removed
+            removed = len(pred.text_lines) - len(reordered) - region_removed
             extra = f" ({removed} margin lines filtered)" if removed else ""
-            if fig_removed:
-                extra += f" ({fig_removed} figure lines filtered)"
+            if region_removed:
+                extra += f" ({region_removed} figure/table lines filtered)"
             print(
                 f"  Page {i + 1}/{page_count}: {len(reordered)} lines{extra}",
                 file=sys.stderr,
             )
 
-        # Build page text, inserting image summaries at figure positions
+        # Build page text, inserting replacements at correct positions
         page_num = i + 1
-        if pic_bboxes:
-            # Collect summaries keyed by the bottom y of their picture bbox
-            summary_inserts: list[tuple[float, str]] = []
+        if all_region_bboxes:
+            # Collect inserts keyed by y-position
+            positional_inserts: list[tuple[float, str]] = []
+
+            # Image summaries at bottom of picture bbox
             for img_idx, pb in enumerate(pic_bboxes, start=1):
                 summary = _find_pdf_image_summary(
                     base_dir, pdf_stem, page_num, img_idx,
                     figure_summary_suffix, encoding,
                 )
                 if summary:
-                    # Insert at the bottom edge of the picture bbox
-                    summary_inserts.append((pb[3], f"[Image: {summary}]"))
+                    positional_inserts.append((pb[3], f"[Image: {summary}]"))
 
-            # Merge text lines and summary inserts by y-position
+            # Table markdown at top of table bbox
+            for tb, tbl_md in zip(tbl_bboxes, tbl_markdowns):
+                if tbl_md:
+                    positional_inserts.append((tb[1], tbl_md))
+
+            # Merge text lines and positional inserts by y-position
             line_items: list[tuple[float, str]] = [
                 (line.bbox[1], line.text) for line in reordered
             ]
-            line_items.extend(summary_inserts)
+            line_items.extend(positional_inserts)
             line_items.sort(key=lambda item: item[0])
             page_text = "\n".join(text for _, text in line_items)
         else:

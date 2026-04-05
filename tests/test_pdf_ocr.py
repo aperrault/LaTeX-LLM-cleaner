@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from latex_llm_cleaner.pdf import (
     _convert_surya_markup,
+    _extract_table_markdowns,
     _filter_figure_lines,
     _reorder_text_lines,
     extract_text_from_pdf_ocr,
@@ -243,3 +244,28 @@ def test_filter_figure_lines_multiple_pictures():
     result = _filter_figure_lines(lines, pic_bboxes)
     texts = [l.text for l in result]
     assert texts == ["Top text", "Middle text", "Bottom text"]
+
+
+# --- Table markdown extraction tests ---
+
+
+def test_extract_table_markdowns_single_table():
+    text = "Some text\n|A|B|\n|---|---|\n|1|2|\nMore text"
+    result = _extract_table_markdowns(text)
+    assert len(result) == 1
+    assert "|A|B|" in result[0]
+    assert "|1|2|" in result[0]
+
+
+def test_extract_table_markdowns_multiple_tables():
+    text = "Intro\n|A|B|\n|---|---|\n|1|2|\n\nMiddle\n|X|Y|\n|---|---|\n|3|4|\nEnd"
+    result = _extract_table_markdowns(text)
+    assert len(result) == 2
+    assert "|1|2|" in result[0]
+    assert "|3|4|" in result[1]
+
+
+def test_extract_table_markdowns_no_tables():
+    text = "Just some text\nwith no tables"
+    result = _extract_table_markdowns(text)
+    assert result == []

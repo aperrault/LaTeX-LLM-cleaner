@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from latex_llm_cleaner.pdf import (
     _convert_surya_markup,
+    _filter_figure_lines,
     _reorder_text_lines,
     extract_text_from_pdf_ocr,
 )
@@ -184,3 +185,61 @@ def test_ocr_extraction_basic(tmp_path):
     result = extract_text_from_pdf_ocr(pdf_path)
     assert "Hello" in result
     assert "World" in result
+
+
+# --- Figure line filtering tests ---
+
+
+def test_filter_figure_lines_removes_lines_inside_picture():
+    """Lines inside a picture bbox should be removed."""
+    lines = [
+        MockTextLine("Text above", [100, 50, 400, 70]),
+        MockTextLine("Figure junk 1", [150, 250, 350, 270]),
+        MockTextLine("Figure junk 2", [150, 300, 350, 320]),
+        MockTextLine("Text below", [100, 500, 400, 520]),
+    ]
+    pic_bboxes = [[100, 200, 400, 450]]  # picture region
+    result = _filter_figure_lines(lines, pic_bboxes)
+    texts = [l.text for l in result]
+    assert texts == ["Text above", "Text below"]
+
+
+def test_filter_figure_lines_no_pictures():
+    """With no picture bboxes, all lines pass through."""
+    lines = [
+        MockTextLine("Line 1", [100, 50, 400, 70]),
+        MockTextLine("Line 2", [100, 100, 400, 120]),
+    ]
+    result = _filter_figure_lines(lines, [])
+    assert len(result) == 2
+
+
+def test_filter_figure_lines_horizontal_overlap_required():
+    """Lines outside the picture's horizontal span should survive."""
+    lines = [
+        MockTextLine("Left column text", [50, 250, 200, 270]),  # left of picture
+        MockTextLine("Figure junk", [350, 250, 550, 270]),  # inside picture
+    ]
+    pic_bboxes = [[300, 200, 600, 400]]
+    result = _filter_figure_lines(lines, pic_bboxes)
+    texts = [l.text for l in result]
+    assert "Left column text" in texts
+    assert "Figure junk" not in texts
+
+
+def test_filter_figure_lines_multiple_pictures():
+    """Lines inside different picture bboxes should all be removed."""
+    lines = [
+        MockTextLine("Top text", [100, 50, 400, 70]),
+        MockTextLine("Fig 1 junk", [150, 150, 350, 170]),
+        MockTextLine("Middle text", [100, 300, 400, 320]),
+        MockTextLine("Fig 2 junk", [150, 450, 350, 470]),
+        MockTextLine("Bottom text", [100, 600, 400, 620]),
+    ]
+    pic_bboxes = [
+        [100, 100, 400, 250],  # first picture
+        [100, 400, 400, 550],  # second picture
+    ]
+    result = _filter_figure_lines(lines, pic_bboxes)
+    texts = [l.text for l in result]
+    assert texts == ["Top text", "Middle text", "Bottom text"]

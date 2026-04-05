@@ -649,12 +649,13 @@ wheels = [
 
 [[package]]
 name = "latex-llm-cleaner"
-version = "0.12.2"
+version = "0.13.2"
 source = { editable = "." }
 dependencies = [
     { name = "bibtexparser" },
     { name = "google-genai" },
     { name = "pymupdf4llm" },
+    { name = "python-docx" },
     { name = "python-pptx" },
 ]
 
@@ -676,6 +677,7 @@ requires-dist = [
     { name = "pymupdf", marker = "extra == 'ocr'", specifier = ">=1.24.0" },
     { name = "pymupdf4llm", specifier = ">=0.0.17" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
+    { name = "python-docx", specifier = ">=1.1.0" },
     { name = "python-pptx", specifier = ">=0.6.21" },
     { name = "requests", marker = "extra == 'ocr'" },
     { name = "surya-ocr", marker = "extra == 'ocr'", specifier = ">=0.17.0" },
@@ -1761,6 +1763,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b9/88/815e53084c5079a59df912825a279f41dd2e0df82281770eadc732f5352c/python_discovery-1.2.1.tar.gz", hash = "sha256:180c4d114bff1c32462537eac5d6a332b768242b76b69c0259c7d14b1b680c9e", size = 58457, upload-time = "2026-03-26T22:30:44.496Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/67/0f/019d3949a40280f6193b62bc010177d4ce702d0fce424322286488569cd3/python_discovery-1.2.1-py3-none-any.whl", hash = "sha256:b6a957b24c1cd79252484d3566d1b49527581d46e789aaf43181005e56201502", size = 31674, upload-time = "2026-03-26T22:30:43.396Z" },
+]
+
+[[package]]
+name = "python-docx"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "lxml" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a9/f7/eddfe33871520adab45aaa1a71f0402a2252050c14c7e3009446c8f4701c/python_docx-1.2.0.tar.gz", hash = "sha256:7bc9d7b7d8a69c9c02ca09216118c86552704edc23bac179283f2e38f86220ce", size = 5723256, upload-time = "2025-06-16T20:46:27.921Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/00/1e03a4989fa5795da308cd774f05b704ace555a70f9bf9d3be057b680bcf/python_docx-1.2.0-py3-none-any.whl", hash = "sha256:3fd478f3250fbbbfd3b94fe1e985955737c145627498896a8a6bf81f4baf66c7", size = 252987, upload-time = "2025-06-16T20:46:22.506Z" },
 ]
 
 [[package]]

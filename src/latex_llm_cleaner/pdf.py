@@ -29,6 +29,48 @@ def _find_pdf_image_summary(
     return None
 
 
+def _find_pdf_table_summary(
+    base_dir: Path, pdf_stem: str, page_num: int, table_index: int,
+    suffix: str, encoding: str,
+) -> str | None:
+    """Look for {pdf_stem}_page{N}_table{M}{suffix} in base_dir."""
+    stem = f"{pdf_stem}_page{page_num}_table{table_index}"
+    summary_path = base_dir / (stem + suffix)
+    if summary_path.is_file():
+        return summary_path.read_text(encoding=encoding).strip()
+    return None
+
+
+def _replace_table_blocks(
+    text: str, base_dir: Path, pdf_stem: str, page_num: int,
+    suffix: str, encoding: str,
+) -> str:
+    """Replace pymupdf4llm table blocks with Gemini summaries if available."""
+    lines = text.split("\n")
+    result: list[str] = []
+    table_index = 0
+    i = 0
+    while i < len(lines):
+        if lines[i].strip().startswith("|"):
+            # Found start of a table block — collect all contiguous pipe lines
+            table_index += 1
+            block_start = i
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                i += 1
+            # Check for Gemini summary
+            summary = _find_pdf_table_summary(
+                base_dir, pdf_stem, page_num, table_index, suffix, encoding,
+            )
+            if summary:
+                result.append(summary)
+            else:
+                result.extend(lines[block_start:i])
+        else:
+            result.append(lines[i])
+            i += 1
+    return "\n".join(result)
+
+
 def _replace_picture_markers(
     text: str, base_dir: Path, pdf_stem: str, page_num: int,
     suffix: str, encoding: str,
@@ -74,6 +116,10 @@ def extract_text_from_pdf(
     for page_num, chunk in enumerate(chunks, start=1):
         text = chunk["text"]
         text = _replace_picture_markers(
+            text, base_dir, pdf_stem, page_num,
+            figure_summary_suffix, encoding,
+        )
+        text = _replace_table_blocks(
             text, base_dir, pdf_stem, page_num,
             figure_summary_suffix, encoding,
         )
@@ -258,10 +304,17 @@ def extract_text_from_pdf_ocr(
                 if summary:
                     positional_inserts.append((pb[3], f"[Image: {summary}]"))
 
-            # Table markdown at top of table bbox
-            for tb, tbl_md in zip(tbl_bboxes, tbl_markdowns):
-                if tbl_md:
-                    positional_inserts.append((tb[1], tbl_md))
+            # Table content at top of table bbox (prefer Gemini summary)
+            for tbl_idx, (tb, tbl_md) in enumerate(
+                zip(tbl_bboxes, tbl_markdowns), start=1,
+            ):
+                gemini_tbl = _find_pdf_table_summary(
+                    base_dir, pdf_stem, page_num, tbl_idx,
+                    figure_summary_suffix, encoding,
+                )
+                content = gemini_tbl or tbl_md
+                if content:
+                    positional_inserts.append((tb[1], content))
 
             # Merge text lines and positional inserts by y-position
             line_items: list[tuple[float, str]] = [

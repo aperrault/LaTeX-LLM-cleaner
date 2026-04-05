@@ -21,6 +21,12 @@ _PROMPT = (
     "the figure itself conveys."
 )
 
+_TABLE_PROMPT = (
+    "Extract this table into clean markdown table format. Preserve all data "
+    "values, column headers, and row labels exactly as shown. Use pipe-delimited "
+    "markdown table syntax. Do not summarize or interpret the data."
+)
+
 _MODEL = "gemini-3.1-flash-lite-preview"
 
 _MAX_WORKERS = 4
@@ -292,6 +298,7 @@ def auto_summarize_pptx(path: Path, options: dict) -> None:
             shape.image.blob,
             shape.image.content_type,
             summary_path,
+            _PROMPT,
         ))
         return image_counter
 
@@ -397,26 +404,48 @@ def auto_summarize_pdf(path: Path, options: dict) -> None:
                 skipped += 1
                 continue
 
-            work_items.append((stem, img_bytes, mime_type, summary_path))
+            work_items.append((stem, img_bytes, mime_type, summary_path, _PROMPT))
+
+    # Second pass: crop and summarize tables
+    for page_num, chunk in enumerate(chunks, start=1):
+        page = doc[page_num - 1]
+        tbl_boxes = [b for b in chunk["page_boxes"] if b["class"] == "table"]
+        for tbl_idx, box in enumerate(tbl_boxes, start=1):
+            stem = f"{pdf_stem}_page{page_num}_table{tbl_idx}"
+            summary_path = base_dir / (stem + suffix)
+
+            if summary_path.is_file():
+                if verbose:
+                    print(f"  Skipping {stem} (summary exists)", file=sys.stderr)
+                skipped += 1
+                continue
+
+            bbox = fitz.Rect(box["bbox"])
+            mat = fitz.Matrix(2, 2)
+            pix = page.get_pixmap(clip=bbox, matrix=mat)
+            work_items.append((
+                stem, pix.tobytes("png"), "image/png",
+                summary_path, _TABLE_PROMPT,
+            ))
 
     doc.close()
 
     if not work_items:
         if verbose:
-            print("  No figures found to summarize.", file=sys.stderr)
+            print("  No figures or tables found to summarize.", file=sys.stderr)
         return
 
     _run_batch_summarize(work_items, api_key, encoding, verbose, skipped)
 
 
 def _run_batch_summarize(
-    work_items: list[tuple[str, bytes, str, Path]],
+    work_items: list[tuple[str, bytes, str, Path, str]],
     api_key: str,
     encoding: str,
     verbose: bool,
     skipped: int,
 ) -> None:
-    """Run Gemini summarization on a batch of (stem, bytes, mime, path) items."""
+    """Run Gemini summarization on a batch of (stem, bytes, mime, path, prompt) items."""
     client = genai.Client(api_key=api_key)
     total = len(work_items)
     generated = 0
@@ -424,8 +453,8 @@ def _run_batch_summarize(
     _print_progress(0, total)
 
     def _do_one(item):
-        stem, image_bytes, content_type, summary_path = item
-        summary_text = _call_gemini_bytes(client, image_bytes, content_type, _PROMPT)
+        stem, image_bytes, content_type, summary_path, prompt = item
+        summary_text = _call_gemini_bytes(client, image_bytes, content_type, prompt)
         summary_path.write_text(summary_text, encoding=encoding)
         return stem, summary_path
 
@@ -527,6 +556,7 @@ def auto_summarize_docx(path: Path, options: dict) -> None:
                             image_part.blob,
                             image_part.content_type,
                             summary_path,
+                            _PROMPT,
                         ))
                     except (KeyError, AttributeError) as e:
                         if verbose:

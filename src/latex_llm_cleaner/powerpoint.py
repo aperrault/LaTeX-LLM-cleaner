@@ -93,8 +93,10 @@ def _shape_to_text(shape, slide_num, image_counter, base_dir,
     if shape.has_table:
         return _table_to_markdown(shape.table), image_counter
 
-    # Picture / image
-    if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+    # Picture / image (including placeholders with embedded images)
+    if shape.shape_type == MSO_SHAPE_TYPE.PICTURE or (
+        shape.shape_type == MSO_SHAPE_TYPE.PLACEHOLDER and hasattr(shape, "image")
+    ):
         image_counter += 1
         summary = _find_image_summary(
             base_dir, pptx_stem, slide_num, image_counter,

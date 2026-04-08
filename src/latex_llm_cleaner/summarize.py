@@ -280,7 +280,10 @@ def auto_summarize_pptx(path: Path, options: dict) -> None:
                 image_counter = _collect_shape(child, slide_num, image_counter)
             return image_counter
 
-        if shape.shape_type != MSO_SHAPE_TYPE.PICTURE:
+        if shape.shape_type != MSO_SHAPE_TYPE.PICTURE and not (
+            shape.shape_type == MSO_SHAPE_TYPE.PLACEHOLDER
+            and hasattr(shape, "image")
+        ):
             return image_counter
 
         image_counter += 1

@@ -107,12 +107,25 @@ _GEMINI_SUPPORTED_MIMES = {"image/png", "image/jpeg", "image/webp", "image/heic"
 
 
 def _ensure_supported_format(image_bytes: bytes, mime_type: str) -> tuple[bytes, str]:
-    """Convert unsupported image formats (GIF, TIFF, BMP, etc.) to PNG.
+    """Convert unsupported image formats (GIF, TIFF, BMP, PDF, etc.) to PNG.
 
     Raises ValueError for formats that cannot be converted (e.g. WMF/EMF).
     """
     if mime_type in _GEMINI_SUPPORTED_MIMES:
         return image_bytes, mime_type
+
+    if mime_type == "application/pdf":
+        import fitz
+
+        try:
+            doc = fitz.open(stream=image_bytes, filetype="pdf")
+            pix = doc[0].get_pixmap(matrix=fitz.Matrix(2, 2))
+            png_bytes = pix.tobytes("png")
+            doc.close()
+            return png_bytes, "image/png"
+        except Exception:
+            raise ValueError(f"unsupported image format: {mime_type}")
+
     import pymupdf
 
     try:

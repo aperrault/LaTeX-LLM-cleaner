@@ -80,11 +80,13 @@ def _paragraph_to_markdown(
         child_tag = etree.QName(child.tag).localname
 
         if child_tag == "r":
-            # Check for inline images (w:drawing/wp:inline with a:blip)
-            # Skip anchor drawings (text boxes, floating decorations)
-            # Use descendant search since drawings may be inside
-            # mc:AlternateContent/mc:Choice wrappers.
-            inlines = child.findall(f".//{{{_WP_NS}}}inline")
+            # Check for images (w:drawing with a:blip) in both inline
+            # and anchor drawings.  Use descendant search since drawings
+            # may be inside mc:AlternateContent/mc:Choice wrappers.
+            inlines = (
+                child.findall(f".//{{{_WP_NS}}}inline")
+                + child.findall(f".//{{{_WP_NS}}}anchor")
+            )
             has_inline_image = False
             if inlines:
                 for inline in inlines:

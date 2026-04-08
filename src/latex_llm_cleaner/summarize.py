@@ -532,8 +532,7 @@ def auto_summarize_docx(path: Path, options: dict) -> None:
     doc = Document(str(path))
 
     # Walk body elements in the same order as docx.py extraction.
-    # Only count inline drawings (wp:inline), not anchor drawings
-    # (text boxes, floating decorations).
+    # Count both inline and anchor drawings that contain image blips.
     work_items: list[tuple[str, bytes, str, Path]] = []
     skipped = 0
     image_counter = 0
@@ -546,7 +545,10 @@ def auto_summarize_docx(path: Path, options: dict) -> None:
         for run in child.findall(f".//{{{_WML_NS}}}r"):
             # Use descendant search since drawings may be inside
             # mc:AlternateContent/mc:Choice wrappers.
-            for inline in run.findall(f".//{{{_WP_NS}}}inline"):
+            for inline in (
+                run.findall(f".//{{{_WP_NS}}}inline")
+                + run.findall(f".//{{{_WP_NS}}}anchor")
+            ):
                 for blip in inline.findall(f".//{{{_DML_NS}}}blip"):
                     image_counter += 1
                     stem = f"{docx_stem}_image{image_counter}"

@@ -8,6 +8,9 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 _OMML_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+_MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+_DML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_PML_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
 
 
 def extract_text_from_pptx(
@@ -52,6 +55,14 @@ def _slide_to_markdown(
 
     parts = [heading]
 
+    # Collect IDs of shapes python-pptx already exposes, so we can
+    # detect AlternateContent elements whose Choice branch is hidden.
+    exposed_ids = set()
+    for shape in slide.shapes:
+        cNvPr = shape._element.find(f".//{{{_PML_NS}}}cNvPr")
+        if cNvPr is not None:
+            exposed_ids.add(cNvPr.get("id"))
+
     # Collect shapes (skip the title shape since we already used it)
     image_counter = 0
     for shape in slide.shapes:
@@ -63,6 +74,22 @@ def _slide_to_markdown(
         )
         if text:
             parts.append(text)
+
+    # Process mc:AlternateContent elements whose Choice branch shapes
+    # are not exposed by python-pptx (e.g. content with OMML math).
+    sp_tree = slide._element.find(f"{{{_PML_NS}}}cSld/{{{_PML_NS}}}spTree")
+    if sp_tree is not None:
+        for ac in sp_tree.findall(f"{{{_MC_NS}}}AlternateContent"):
+            choice = ac.find(f"{{{_MC_NS}}}Choice")
+            if choice is None:
+                continue
+            for sp in choice:
+                cNvPr = sp.find(f".//{{{_PML_NS}}}cNvPr")
+                if cNvPr is not None and cNvPr.get("id") in exposed_ids:
+                    continue  # already processed via python-pptx
+                text = _extract_text_from_sp_element(sp)
+                if text:
+                    parts.append(text)
 
     # Speaker notes
     if notes and slide.has_notes_slide:
@@ -123,9 +150,26 @@ def _shape_to_text(shape, slide_num, image_counter, base_dir,
     return None, image_counter
 
 
+def _extract_text_from_sp_element(sp):
+    """Extract text from a raw sp XML element (for mc:AlternateContent shapes)."""
+    txBody = sp.find(f"{{{_PML_NS}}}txBody")
+    if txBody is None:
+        return None
+    paragraphs = []
+    for p_elem in txBody.findall(f"{{{_DML_NS}}}p"):
+        text = _process_paragraph_element(p_elem)
+        if text:
+            paragraphs.append(text)
+    return "\n\n".join(paragraphs) if paragraphs else None
+
+
 def _process_paragraph(paragraph):
-    """Extract text from a paragraph, preserving OMML math as XML."""
-    element = paragraph._element
+    """Extract text from a python-pptx Paragraph object."""
+    return _process_paragraph_element(paragraph._element)
+
+
+def _process_paragraph_element(element):
+    """Extract text from a paragraph XML element, preserving OMML math as XML."""
     ns_math = f"{{{_OMML_NS}}}"
 
     parts = []
@@ -142,6 +186,12 @@ def _process_paragraph(paragraph):
             for t_elem in child:
                 if t_elem.tag.endswith("}t") and t_elem.text:
                     parts.append(t_elem.text)
+        # a14:m wrapper around OMML math (used in mc:Choice branches)
+        elif tag.endswith("}m"):
+            for math_child in child:
+                if ns_math in math_child.tag:
+                    math_xml = xml_tostring(math_child, encoding="unicode")
+                    parts.append(math_xml)
 
     result = "".join(parts).strip()
     return result if result else None

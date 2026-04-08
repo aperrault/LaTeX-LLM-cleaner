@@ -2,8 +2,6 @@
 
 import sys
 from pathlib import Path
-from xml.etree.ElementTree import tostring as xml_tostring
-
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -169,17 +167,18 @@ def _process_paragraph(paragraph):
 
 
 def _process_paragraph_element(element):
-    """Extract text from a paragraph XML element, preserving OMML math as XML."""
+    """Extract text from a paragraph XML element, converting OMML math to LaTeX."""
+    from latex_llm_cleaner.omml import omml_element_to_latex
+
     ns_math = f"{{{_OMML_NS}}}"
 
     parts = []
     # Walk the paragraph's XML children to interleave text and math
     for child in element:
         tag = child.tag
-        # OMML math paragraph (display math)
+        # OMML math paragraph (display math) or inline math
         if tag == f"{ns_math}oMathPara" or tag == f"{ns_math}oMath":
-            math_xml = xml_tostring(child, encoding="unicode")
-            parts.append(math_xml)
+            parts.append(omml_element_to_latex(child))
         # Regular text run (a:r in drawingML)
         elif tag.endswith("}r"):
             # Get text from <a:t> child
@@ -190,8 +189,7 @@ def _process_paragraph_element(element):
         elif tag.endswith("}m"):
             for math_child in child:
                 if ns_math in math_child.tag:
-                    math_xml = xml_tostring(math_child, encoding="unicode")
-                    parts.append(math_xml)
+                    parts.append(omml_element_to_latex(math_child))
 
     result = "".join(parts).strip()
     return result if result else None

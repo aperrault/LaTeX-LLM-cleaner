@@ -117,8 +117,8 @@ def _paragraph_to_markdown(
                     spans.append(pair)
 
         elif child_tag in ("oMathPara", "oMath"):
-            math_xml = etree.tostring(child, encoding="unicode")
-            spans.append((math_xml, "raw"))
+            from latex_llm_cleaner.omml import omml_element_to_latex
+            spans.append((omml_element_to_latex(child), "raw"))
 
     # Merge adjacent spans with identical formatting, then wrap
     run_parts: list[str] = []
@@ -225,7 +225,8 @@ def _table_to_markdown(tbl_element):
                 cell_parts.append(plain)
             # Collect OMML math elements
             for omath in tc.findall(f".//{{{_OMML_NS}}}oMath"):
-                cell_parts.append(etree.tostring(omath, encoding="unicode"))
+                from latex_llm_cleaner.omml import omml_element_to_latex
+                cell_parts.append(omml_element_to_latex(omath))
             cell_text = " ".join(cell_parts)
             cells.append(cell_text.replace("|", "\\|"))
         rows.append("| " + " | ".join(cells) + " |")

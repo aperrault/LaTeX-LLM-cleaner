@@ -149,6 +149,18 @@ def _extract_table_markdowns(chunk_text: str) -> list[str]:
     return ["\n".join(b) for b in blocks]
 
 
+class _VirtualLine:
+    """Lightweight stand-in for a Surya TextLine used for figure/table inserts.
+
+    Participates in column classification and segment ordering so that
+    summaries and table content appear at the correct reading-order position.
+    """
+
+    def __init__(self, text: str, bbox: list[float]):
+        self.text = text
+        self.bbox = bbox
+
+
 def _filter_figure_lines(text_lines: list, picture_bboxes: list[list[float]]) -> list:
     """Remove OCR text lines that fall inside region bounding boxes.
 
@@ -265,68 +277,76 @@ def extract_text_from_pdf_ocr(
     pdf_stem = path.stem
     pages_text = []
     for i, pred in enumerate(predictions):
-        reordered = _reorder_text_lines(pred.text_lines, images[i].width)
         pic_bboxes = page_picture_bboxes[i] if i < len(page_picture_bboxes) else []
         tbl_bboxes = page_table_bboxes[i] if i < len(page_table_bboxes) else []
         tbl_markdowns = page_table_markdowns[i] if i < len(page_table_markdowns) else []
-
-        # Filter out OCR lines inside figure and table regions
         all_region_bboxes = pic_bboxes + tbl_bboxes
+
+        # Step 1: Filter OCR lines inside figure/table regions FIRST
+        ocr_lines = pred.text_lines
         if all_region_bboxes:
-            before_count = len(reordered)
-            reordered = _filter_figure_lines(reordered, all_region_bboxes)
-            region_removed = before_count - len(reordered)
+            before_count = len(ocr_lines)
+            ocr_lines = _filter_figure_lines(ocr_lines, all_region_bboxes)
+            region_removed = before_count - len(ocr_lines)
         else:
             region_removed = 0
 
+        # Step 2: Build virtual lines for image summaries and table content
+        page_num = i + 1
+        virtual_lines: list[_VirtualLine] = []
+        for img_idx, pb in enumerate(pic_bboxes, start=1):
+            summary = _find_pdf_image_summary(
+                base_dir, pdf_stem, page_num, img_idx,
+                figure_summary_suffix, encoding,
+            )
+            if summary:
+                # Place at bottom of picture bbox, spanning picture width
+                virtual_lines.append(_VirtualLine(
+                    f"[Image: {summary}]",
+                    [pb[0], pb[3], pb[2], pb[3] + 1],
+                ))
+        for tbl_idx, (tb, tbl_md) in enumerate(
+            zip(tbl_bboxes, tbl_markdowns), start=1,
+        ):
+            gemini_tbl = _find_pdf_table_summary(
+                base_dir, pdf_stem, page_num, tbl_idx,
+                figure_summary_suffix, encoding,
+            )
+            content = gemini_tbl or tbl_md
+            if content:
+                # Place at top of table bbox, spanning table width
+                virtual_lines.append(_VirtualLine(
+                    content,
+                    [tb[0], tb[1], tb[2], tb[1] + 1],
+                ))
+
+        # Step 3: Combine and reorder with segment-aware column logic
+        all_lines: list = list(ocr_lines) + virtual_lines
+        reordered = _reorder_text_lines(
+            all_lines, images[i].width, all_region_bboxes,
+        )
+
         if verbose:
-            removed = len(pred.text_lines) - len(reordered) - region_removed
-            extra = f" ({removed} margin lines filtered)" if removed else ""
+            margin_removed = len(pred.text_lines) - region_removed - (
+                len(reordered) - len(virtual_lines)
+            )
+            extra = f" ({margin_removed} margin lines filtered)" if margin_removed > 0 else ""
             if region_removed:
                 extra += f" ({region_removed} figure/table lines filtered)"
             print(
-                f"  Page {i + 1}/{page_count}: {len(reordered)} lines{extra}",
+                f"  Page {i + 1}/{page_count}: "
+                f"{len(reordered) - len(virtual_lines)} lines{extra}",
                 file=sys.stderr,
             )
 
-        # Build page text, inserting replacements at correct positions
-        page_num = i + 1
-        if all_region_bboxes:
-            # Collect inserts keyed by y-position
-            positional_inserts: list[tuple[float, str]] = []
-
-            # Image summaries at bottom of picture bbox
-            for img_idx, pb in enumerate(pic_bboxes, start=1):
-                summary = _find_pdf_image_summary(
-                    base_dir, pdf_stem, page_num, img_idx,
-                    figure_summary_suffix, encoding,
-                )
-                if summary:
-                    positional_inserts.append((pb[3], f"[Image: {summary}]"))
-
-            # Table content at top of table bbox (prefer Gemini summary)
-            for tbl_idx, (tb, tbl_md) in enumerate(
-                zip(tbl_bboxes, tbl_markdowns), start=1,
-            ):
-                gemini_tbl = _find_pdf_table_summary(
-                    base_dir, pdf_stem, page_num, tbl_idx,
-                    figure_summary_suffix, encoding,
-                )
-                content = gemini_tbl or tbl_md
-                if content:
-                    positional_inserts.append((tb[1], content))
-
-            # Merge text lines and positional inserts by y-position
-            line_items: list[tuple[float, str]] = [
-                (line.bbox[1], line.text) for line in reordered
-            ]
-            line_items.extend(positional_inserts)
-            line_items.sort(key=lambda item: item[0])
-            page_text = "\n".join(text for _, text in line_items)
+        # Step 4: Output in reading order (no re-sorting needed)
+        if reordered:
+            page_text = "\n".join(line.text for line in reordered)
         else:
-            lines = [line.text for line in reordered]
-            page_text = "\n".join(lines)
-            # Append any image summaries (fallback for pages without detected boxes)
+            page_text = ""
+
+        # Fallback: append image summaries for pages without detected boxes
+        if not all_region_bboxes:
             img_idx = 1
             while True:
                 summary = _find_pdf_image_summary(
@@ -344,14 +364,18 @@ def extract_text_from_pdf_ocr(
     return _convert_surya_markup(text)
 
 
-def _reorder_text_lines(text_lines: list, page_width: int) -> list:
+def _reorder_text_lines(
+    text_lines: list,
+    page_width: int,
+    region_bboxes: list[list[float]] | None = None,
+) -> list:
     """Reorder OCR text lines for correct two-column reading order
     and filter out margin line numbers.
 
     For two-column papers, Surya detects lines in scan order (left-right
     alternating). This function groups lines by column and emits each
     column top-to-bottom. Full-width lines (titles, section headers)
-    act as column-flush boundaries.
+    and figure/table region boundaries act as column-flush boundaries.
     """
     if not text_lines:
         return []
@@ -384,8 +408,14 @@ def _reorder_text_lines(text_lines: list, page_width: int) -> list:
         else:
             return "right"
 
-    # Step 3: Build reading order
+    # Step 3: Build reading order with segment-aware flushing
     sorted_lines = sorted(filtered, key=lambda l: l.bbox[1])
+
+    # Compute flush y-values from region bboxes (figure/table boundaries)
+    flush_ys = sorted(
+        {y for bb in (region_bboxes or []) for y in (bb[1], bb[3])}
+    )
+    flush_idx = 0
 
     result: list = []
     left_buf: list = []
@@ -400,6 +430,11 @@ def _reorder_text_lines(text_lines: list, page_width: int) -> list:
         right_buf.clear()
 
     for line in sorted_lines:
+        # Flush at region boundaries before processing the line
+        while flush_idx < len(flush_ys) and line.bbox[1] >= flush_ys[flush_idx]:
+            flush_columns()
+            flush_idx += 1
+
         cat = classify(line)
         if cat == "full":
             flush_columns()

@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import patch
 
 from latex_llm_cleaner.pdf import (
+    _VirtualLine,
     _convert_surya_markup,
     _extract_table_markdowns,
     _filter_figure_lines,
@@ -269,3 +270,126 @@ def test_extract_table_markdowns_no_tables():
     text = "Just some text\nwith no tables"
     result = _extract_table_markdowns(text)
     assert result == []
+
+
+# --- Segment-aware reordering tests ---
+
+
+def test_figure_bbox_creates_flush_boundary():
+    """A figure bbox in the right column should prevent interleaving
+    of left-column text beside the figure with right-column text above it."""
+    page_width = 1000
+    # Right-column figure from y=300 to y=600
+    region_bboxes = [[550, 300, 950, 600]]
+    lines = [
+        # Above the figure: both columns
+        MockTextLine("Left above", [50, 100, 450, 120]),
+        MockTextLine("Right above", [550, 100, 950, 120]),
+        # Beside the figure: only left column has text
+        MockTextLine("Left beside 1", [50, 350, 450, 370]),
+        MockTextLine("Left beside 2", [50, 450, 450, 470]),
+        # Below the figure: both columns
+        MockTextLine("Left below", [50, 700, 450, 720]),
+        MockTextLine("Right below", [550, 700, 950, 720]),
+    ]
+    result = _reorder_text_lines(lines, page_width, region_bboxes)
+    texts = [l.text for l in result]
+    # Segment 1 (y<300): left then right
+    # Segment 2 (300<=y<600): left only (right filtered by caller)
+    # Segment 3 (y>=600): left then right
+    assert texts == [
+        "Left above", "Right above",
+        "Left beside 1", "Left beside 2",
+        "Left below", "Right below",
+    ]
+
+
+def test_full_width_figure_bbox_segments():
+    """A full-width figure bbox should cleanly separate above/below text."""
+    page_width = 1000
+    region_bboxes = [[50, 200, 950, 500]]  # full-width figure
+    lines = [
+        MockTextLine("Left above", [50, 50, 450, 70]),
+        MockTextLine("Right above", [550, 50, 950, 70]),
+        MockTextLine("Left below", [50, 600, 450, 620]),
+        MockTextLine("Right below", [550, 600, 950, 620]),
+    ]
+    result = _reorder_text_lines(lines, page_width, region_bboxes)
+    texts = [l.text for l in result]
+    assert texts == [
+        "Left above", "Right above",
+        "Left below", "Right below",
+    ]
+
+
+def test_virtual_line_ordered_with_real_lines():
+    """Virtual lines should participate in column/segment ordering."""
+    page_width = 1000
+    # Figure in right column from y=200 to y=400
+    region_bboxes = [[550, 200, 950, 400]]
+    lines = [
+        MockTextLine("Left 1", [50, 100, 450, 120]),
+        MockTextLine("Right 1", [550, 100, 950, 120]),
+        MockTextLine("Left 2", [50, 300, 450, 320]),
+        # Virtual line: figure summary at bottom of figure bbox
+        _VirtualLine("[Image: fig summary]", [550, 400, 950, 401]),
+        MockTextLine("Left 3", [50, 500, 450, 520]),
+        MockTextLine("Right 3", [550, 500, 950, 520]),
+    ]
+    result = _reorder_text_lines(lines, page_width, region_bboxes)
+    texts = [l.text for l in result]
+    # Segment 1 (y<200): Left 1, Right 1
+    # Segment 2 (200<=y<400): Left 2 (right column is the figure)
+    # Segment 3 (y>=400): Left 3 (left col), then [Image] + Right 3 (right col)
+    assert texts == [
+        "Left 1", "Right 1",
+        "Left 2",
+        "Left 3", "[Image: fig summary]", "Right 3",
+    ]
+
+
+def test_no_region_bboxes_backward_compat():
+    """Without region_bboxes, behavior matches original."""
+    page_width = 1000
+    lines = [
+        MockTextLine("Left 1", [50, 100, 450, 120]),
+        MockTextLine("Right 1", [550, 100, 950, 120]),
+        MockTextLine("Left 2", [50, 130, 450, 150]),
+        MockTextLine("Right 2", [550, 130, 950, 150]),
+    ]
+    result = _reorder_text_lines(lines, page_width)
+    texts = [l.text for l in result]
+    assert texts == ["Left 1", "Left 2", "Right 1", "Right 2"]
+
+
+def test_multiple_figures_different_columns():
+    """Two figures in different columns at different y-ranges."""
+    page_width = 1000
+    region_bboxes = [
+        [50, 200, 450, 400],   # left-column figure
+        [550, 500, 950, 700],  # right-column figure
+    ]
+    lines = [
+        MockTextLine("L top", [50, 50, 450, 70]),
+        MockTextLine("R top", [550, 50, 950, 70]),
+        # Between the two figures
+        MockTextLine("R mid", [550, 300, 950, 320]),  # beside left figure
+        MockTextLine("L mid", [50, 450, 450, 470]),   # below left figure, above right figure
+        MockTextLine("R mid2", [550, 450, 950, 470]),
+        # Below both figures
+        MockTextLine("L bot", [50, 800, 450, 820]),
+        MockTextLine("R bot", [550, 800, 950, 820]),
+    ]
+    result = _reorder_text_lines(lines, page_width, region_bboxes)
+    texts = [l.text for l in result]
+    # Segment 1 (y<200): L top, R top
+    # Segment 2 (200<=y<400): R mid (left fig occupies left column)
+    # Segment 3 (400<=y<500): L mid, R mid2
+    # Segment 4 (500<=y<700): nothing here (right fig)
+    # Segment 5 (y>=700): L bot, R bot
+    assert texts == [
+        "L top", "R top",
+        "R mid",
+        "L mid", "R mid2",
+        "L bot", "R bot",
+    ]

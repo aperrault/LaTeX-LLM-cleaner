@@ -319,6 +319,11 @@ def _expand_one_pass(content: str, macros: dict[str, Macro]) -> str:
     last_end = 0
 
     for m in macro_re.finditer(content):
+        # Skip matches inside an already-consumed region (e.g. nested macros
+        # whose outer invocation was already expanded)
+        if m.start() < last_end:
+            continue
+
         # Extract the macro name from the match
         matched = m.group(0)
         # The name is everything after the backslash

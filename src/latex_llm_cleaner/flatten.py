@@ -30,6 +30,22 @@ def _parse_includeonly(content: str) -> set[str] | None:
     return {name.strip() for name in m.group(1).split(",")}
 
 
+def _resolve_input_path(filename: str, root_dir: Path, current_dir: Path) -> Path:
+    """Resolve an \\input path, trying the compilation root first, then the current file's dir."""
+    for base in (root_dir, current_dir):
+        candidate = base / filename
+        if not candidate.suffix:
+            candidate = candidate.with_suffix(".tex")
+        candidate = candidate.resolve()
+        if candidate.is_file():
+            return candidate
+    # Nothing found — return the root-relative path for the error message
+    fallback = root_dir / filename
+    if not fallback.suffix:
+        fallback = fallback.with_suffix(".tex")
+    return fallback.resolve()
+
+
 def _flatten_recursive(
     content: str,
     current_dir: Path,
@@ -37,7 +53,11 @@ def _flatten_recursive(
     includeonly: set[str] | None,
     encoding: str,
     verbose: bool,
+    root_dir: Path | None = None,
 ) -> str:
+    if root_dir is None:
+        root_dir = current_dir
+
     def replacer(m: re.Match) -> str:
         cmd = m.group(1)  # input, include, or subfile
         filename = m.group(2).strip()
@@ -48,12 +68,9 @@ def _flatten_recursive(
             if basename not in includeonly:
                 return ""
 
-        # Resolve path
-        file_path = current_dir / filename
-        if not file_path.suffix:
-            file_path = file_path.with_suffix(".tex")
-
-        file_path = file_path.resolve()
+        # Resolve path: try compilation root first (standard LaTeX behavior),
+        # then fall back to the directory of the file containing the \input
+        file_path = _resolve_input_path(filename, root_dir, current_dir)
 
         # Cycle detection
         if file_path in visited:
@@ -80,7 +97,8 @@ def _flatten_recursive(
 
         # Recursively flatten the child content
         child_content = _flatten_recursive(
-            child_content, file_path.parent, visited, includeonly, encoding, verbose
+            child_content, file_path.parent, visited, includeonly, encoding, verbose,
+            root_dir=root_dir,
         )
         visited.discard(file_path)
 
@@ -90,7 +108,16 @@ def _flatten_recursive(
 
         return child_content
 
-    return _INCLUDE_RE.sub(replacer, content)
+    # Process line-by-line so we can skip commented-out \input commands
+    lines = content.split("\n")
+    result_lines = []
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("%"):
+            result_lines.append(line)
+        else:
+            result_lines.append(_INCLUDE_RE.sub(replacer, line))
+    return "\n".join(result_lines)
 
 
 def _strip_subfile_wrapper(content: str) -> str:

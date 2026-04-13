@@ -25,20 +25,29 @@ def inline_bibliography(content: str, base_dir: Path, options: dict) -> str:
     verbose = options.get("verbose", False)
     encoding = options.get("encoding", "utf-8")
 
+    # Build list of directories to search for bib/bbl files:
+    # compilation root (base_dir) + input file's directory
+    search_dirs = [base_dir]
+    input_file = options.get("input_file")
+    if input_file is not None:
+        input_dir = Path(input_file).resolve().parent
+        if input_dir != base_dir.resolve():
+            search_dirs.append(input_dir)
+
     # Check if there are any bibliography commands to process
     has_bib_cmd = _BIBLIOGRAPHY_RE.search(content) or _ADDBIBRESOURCE_RE.search(content)
     if not has_bib_cmd:
         return content
 
     # Try .bbl file first (common in arXiv downloads)
-    bbl_block = _try_bbl_file(content, base_dir, options)
+    bbl_block = _try_bbl_file(content, base_dir, options, search_dirs)
     if bbl_block is not None:
         if verbose:
             print("  Using pre-compiled .bbl file", file=sys.stderr)
         return _replace_bib_commands(content, bbl_block)
 
     # Fall back to .bib file parsing
-    bib_files = _find_bib_files(content, base_dir)
+    bib_files = _find_bib_files(content, base_dir, search_dirs)
     if not bib_files:
         return content
 
@@ -100,9 +109,12 @@ def _replace_bib_commands(content: str, bib_block: str) -> str:
     return content
 
 
-def _try_bbl_file(content: str, base_dir: Path, options: dict) -> str | None:
+def _try_bbl_file(content: str, base_dir: Path, options: dict,
+                   search_dirs: list[Path] | None = None) -> str | None:
     """Look for a .bbl file and return its contents if found."""
     encoding = options.get("encoding", "utf-8")
+    if search_dirs is None:
+        search_dirs = [base_dir]
     candidates: list[Path] = []
 
     # Try <input_file_stem>.bbl (e.g., main.tex → main.bbl)
@@ -114,7 +126,8 @@ def _try_bbl_file(content: str, base_dir: Path, options: dict) -> str | None:
     for m in _BIBLIOGRAPHY_RE.finditer(content):
         for name in m.group(1).split(","):
             name = name.strip()
-            candidates.append(base_dir / (name + ".bbl"))
+            for search_dir in search_dirs:
+                candidates.append(search_dir / (name + ".bbl"))
 
     for candidate in candidates:
         if candidate.is_file():
@@ -123,8 +136,10 @@ def _try_bbl_file(content: str, base_dir: Path, options: dict) -> str | None:
     return None
 
 
-def _find_bib_files(content: str, base_dir: Path) -> list[Path]:
+def _find_bib_files(content: str, base_dir: Path, search_dirs: list[Path] | None = None) -> list[Path]:
     """Find all referenced .bib file paths."""
+    if search_dirs is None:
+        search_dirs = [base_dir]
     files: list[Path] = []
 
     for m in _BIBLIOGRAPHY_RE.finditer(content):
@@ -132,13 +147,25 @@ def _find_bib_files(content: str, base_dir: Path) -> list[Path]:
             name = name.strip()
             if not name.endswith(".bib"):
                 name += ".bib"
-            files.append(base_dir / name)
+            for search_dir in search_dirs:
+                candidate = search_dir / name
+                if candidate.is_file():
+                    files.append(candidate)
+                    break
+            else:
+                files.append(base_dir / name)
 
     for m in _ADDBIBRESOURCE_RE.finditer(content):
         name = m.group(1).strip()
         if not name.endswith(".bib"):
             name += ".bib"
-        files.append(base_dir / name)
+        for search_dir in search_dirs:
+            candidate = search_dir / name
+            if candidate.is_file():
+                files.append(candidate)
+                break
+        else:
+            files.append(base_dir / name)
 
     return files
 

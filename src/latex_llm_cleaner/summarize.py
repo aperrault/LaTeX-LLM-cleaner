@@ -309,10 +309,17 @@ def auto_summarize_pptx(path: Path, options: dict) -> None:
             skipped += 1
             return image_counter
 
+        try:
+            blob = shape.image.blob
+            content_type = shape.image.content_type
+        except ValueError:
+            image_counter -= 1
+            return image_counter
+
         work_items.append((
             stem,
-            shape.image.blob,
-            shape.image.content_type,
+            blob,
+            content_type,
             summary_path,
             _PROMPT,
         ))

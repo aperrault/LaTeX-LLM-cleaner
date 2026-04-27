@@ -12,6 +12,7 @@ from google import genai
 from google.genai import types
 
 from .figures import _INCLUDEGRAPHICS_RE, _IMAGE_EXTENSIONS, _find_summary
+from .powerpoint import shape_has_embedded_image
 
 _PROMPT = (
     "Describe this figure so that someone who cannot see it has all the same "
@@ -295,7 +296,7 @@ def auto_summarize_pptx(path: Path, options: dict) -> None:
 
         if shape.shape_type != MSO_SHAPE_TYPE.PICTURE and not (
             shape.shape_type == MSO_SHAPE_TYPE.PLACEHOLDER
-            and hasattr(shape, "image")
+            and shape_has_embedded_image(shape)
         ):
             return image_counter
 

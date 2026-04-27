@@ -11,6 +11,20 @@ _DML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _PML_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
 
 
+def shape_has_embedded_image(shape) -> bool:
+    """True if `shape.image` is accessible without raising.
+
+    python-pptx's `image` property raises ValueError on shapes that report
+    as picture-like but have no embedded blob (linked images, empty picture
+    placeholders), so `hasattr(shape, "image")` propagates that ValueError.
+    """
+    try:
+        shape.image
+    except (ValueError, AttributeError):
+        return False
+    return True
+
+
 def extract_text_from_pptx(
     path: Path,
     verbose: bool = False,
@@ -120,7 +134,8 @@ def _shape_to_text(shape, slide_num, image_counter, base_dir,
 
     # Picture / image (including placeholders with embedded images)
     if shape.shape_type == MSO_SHAPE_TYPE.PICTURE or (
-        shape.shape_type == MSO_SHAPE_TYPE.PLACEHOLDER and hasattr(shape, "image")
+        shape.shape_type == MSO_SHAPE_TYPE.PLACEHOLDER
+        and shape_has_embedded_image(shape)
     ):
         image_counter += 1
         summary = _find_image_summary(

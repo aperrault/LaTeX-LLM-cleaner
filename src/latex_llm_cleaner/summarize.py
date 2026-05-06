@@ -1,5 +1,6 @@
 """Auto-generate figure summaries using the Gemini vision API."""
 
+import hashlib
 import mimetypes
 import re
 import sys
@@ -469,31 +470,75 @@ def _run_batch_summarize(
     verbose: bool,
     skipped: int,
 ) -> None:
-    """Run Gemini summarization on a batch of (stem, bytes, mime, path, prompt) items."""
+    """Run Gemini summarization on a batch of (stem, bytes, mime, path, prompt) items.
+
+    Items with byte-identical images and identical prompts are sent once and
+    fanned out to all target paths. Some PDFs embed the same blank/decorative
+    image on every page, which would otherwise cost N redundant API calls and
+    produce N independently-hallucinated descriptions of the same bytes.
+    """
+    # Group by (md5(bytes), prompt). Same bytes + same prompt → one API call,
+    # written to every target path in the group.
+    groups: dict[tuple[str, str], dict] = {}
+    for stem, image_bytes, content_type, summary_path, prompt in work_items:
+        key = (hashlib.md5(image_bytes).hexdigest(), prompt)
+        g = groups.setdefault(key, {
+            "bytes": image_bytes,
+            "mime": content_type,
+            "prompt": prompt,
+            "targets": [],
+        })
+        g["targets"].append((stem, summary_path))
+
+    if verbose:
+        deduped = sum(len(g["targets"]) - 1 for g in groups.values())
+        if deduped:
+            print(
+                f"  Deduplicated {deduped} duplicate image(s); "
+                f"{len(groups)} unique image(s) to summarize.",
+                file=sys.stderr,
+            )
+            for (md5, _prompt), g in groups.items():
+                if len(g["targets"]) > 1:
+                    leader = g["targets"][0][0]
+                    followers = ", ".join(s for s, _ in g["targets"][1:])
+                    print(
+                        f"    {leader} = {followers} (md5 {md5[:10]})",
+                        file=sys.stderr,
+                    )
+
     client = genai.Client(api_key=api_key)
     total = len(work_items)
     generated = 0
 
     _print_progress(0, total)
 
-    def _do_one(item):
-        stem, image_bytes, content_type, summary_path, prompt = item
-        summary_text = _call_gemini_bytes(client, image_bytes, content_type, prompt)
-        summary_path.write_text(summary_text, encoding=encoding)
-        return stem, summary_path
+    def _do_group(group):
+        summary_text = _call_gemini_bytes(
+            client, group["bytes"], group["mime"], group["prompt"]
+        )
+        for _stem, summary_path in group["targets"]:
+            summary_path.write_text(summary_text, encoding=encoding)
+        return group["targets"]
 
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
-        futures = {pool.submit(_do_one, item): item for item in work_items}
+        futures = {pool.submit(_do_group, g): g for g in groups.values()}
         for future in as_completed(futures):
-            stem = futures[future][0]
+            group = futures[future]
             try:
-                _, summary_path = future.result()
-                generated += 1
+                targets = future.result()
+                generated += len(targets)
                 if verbose:
-                    print(f"\r  Wrote {summary_path}" + " " * 20, file=sys.stderr)
+                    for _stem, summary_path in targets:
+                        print(
+                            f"\r  Wrote {summary_path}" + " " * 20,
+                            file=sys.stderr,
+                        )
             except Exception as e:
+                leader_stem = group["targets"][0][0]
                 print(
-                    f"\r  Warning: API error for {stem}: {e}" + " " * 20,
+                    f"\r  Warning: API error for {leader_stem} "
+                    f"(+{len(group['targets']) - 1} dedup'd): {e}" + " " * 20,
                     file=sys.stderr,
                 )
             _print_progress(generated, total)

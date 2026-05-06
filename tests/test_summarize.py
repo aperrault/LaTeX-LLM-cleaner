@@ -376,3 +376,40 @@ def test_auto_summarize_pdf_skips_text_only(tmp_path, pdf_options):
             mod.auto_summarize_pdf(pdf_path, pdf_options)
 
     mock_call.assert_not_called()
+
+
+def test_auto_summarize_pdf_dedups_identical_images(tmp_path, pdf_options):
+    """Same image bytes embedded on N pages should call the API once and
+    fan the result out to all N summary paths."""
+    import fitz
+
+    pdf_path = tmp_path / "doc.pdf"
+    doc = fitz.open()
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 200), 1)
+    pix.set_rect(pix.irect, (255, 0, 0, 255))
+    img_bytes = pix.tobytes("png")
+    for _ in range(3):
+        page = doc.new_page()
+        page.insert_text((72, 72), "Text before figure.")
+        page.insert_image(fitz.Rect(100, 150, 400, 450), stream=img_bytes)
+        page.insert_text((72, 500), "Text after figure.")
+    doc.save(str(pdf_path))
+    doc.close()
+
+    mock_genai = MagicMock()
+    mock_genai.Client.return_value = MagicMock()
+
+    with patch(
+        "latex_llm_cleaner.summarize._call_gemini_bytes",
+        return_value="A red square image.",
+    ) as mock_call:
+        import latex_llm_cleaner.summarize as mod
+
+        with patch.dict(mod.auto_summarize_pdf.__globals__, {"genai": mock_genai}):
+            mod.auto_summarize_pdf(pdf_path, pdf_options)
+
+    assert mock_call.call_count == 1
+    for n in (1, 2, 3):
+        summary_path = tmp_path / f"doc_page{n}_image1_summary.txt"
+        assert summary_path.is_file()
+        assert summary_path.read_text() == "A red square image."

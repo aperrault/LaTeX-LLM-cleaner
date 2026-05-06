@@ -305,6 +305,7 @@ def extract_text_from_pdf_ocr(
                     f"[Image: {summary}]",
                     [pb[0], pb[3], pb[2], pb[3] + 1],
                 ))
+        page_width = images[i].width
         for tbl_idx, (tb, tbl_md) in enumerate(
             zip(tbl_bboxes, tbl_markdowns), start=1,
         ):
@@ -314,10 +315,13 @@ def extract_text_from_pdf_ocr(
             )
             content = gemini_tbl or tbl_md
             if content:
-                # Place at top of table bbox, spanning table width
+                # Span full page width so classify() returns "full" — flushes
+                # both column buffers and emits the table inline at table_top,
+                # keeping the caption (last item in the flushed buffer) adjacent
+                # to the table content.
                 virtual_lines.append(_VirtualLine(
                     content,
-                    [tb[0], tb[1], tb[2], tb[1] + 1],
+                    [0, tb[1], page_width, tb[1] + 1],
                 ))
 
         # Step 3: Combine and reorder with segment-aware column logic

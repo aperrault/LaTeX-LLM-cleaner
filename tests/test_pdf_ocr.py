@@ -348,6 +348,40 @@ def test_virtual_line_ordered_with_real_lines():
     ]
 
 
+def test_full_width_virtual_table_keeps_caption_adjacent():
+    """A column-confined table whose virtual line is given a full-width bbox
+    should be emitted inline at table_top, with the caption (last item in
+    the right buffer at flush time) appearing immediately before it.
+
+    Regression for two-column papers where a right-column table caption was
+    being separated from the table content by left-column text accumulated
+    between flushes.
+    """
+    page_width = 1000
+    # Table in right column from y=400 to y=550
+    region_bboxes = [[550, 400, 950, 550]]
+    lines = [
+        # Above the table: left col text + right col text + caption
+        MockTextLine("Left para", [50, 100, 450, 120]),
+        MockTextLine("Right preamble", [550, 100, 950, 120]),
+        MockTextLine("Table 1: caption", [550, 300, 950, 320]),
+        # Virtual table line spanning full page width — fix under test
+        _VirtualLine("| col1 | col2 |", [0, 400, page_width, 401]),
+        # Left col text whose y falls between table_top and table_bot —
+        # without the fix this would be emitted between caption and table
+        MockTextLine("Left beside", [50, 450, 450, 470]),
+        # Below the table
+        MockTextLine("Left after", [50, 600, 450, 620]),
+        MockTextLine("Right after", [550, 600, 950, 620]),
+    ]
+    result = _reorder_text_lines(lines, page_width, region_bboxes)
+    texts = [l.text for l in result]
+    # Caption must immediately precede the table content.
+    cap = texts.index("Table 1: caption")
+    tbl = texts.index("| col1 | col2 |")
+    assert tbl == cap + 1, f"caption-table not adjacent: {texts}"
+
+
 def test_no_region_bboxes_backward_compat():
     """Without region_bboxes, behavior matches original."""
     page_width = 1000

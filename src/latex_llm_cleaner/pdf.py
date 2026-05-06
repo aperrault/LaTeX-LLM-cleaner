@@ -17,6 +17,92 @@ _PICTURE_MARKER_RE = re.compile(
 )
 
 
+_BBOX_MERGE_GAP = 30  # px in pymupdf coords; sub-bboxes within this gap merge
+_OCR_FILTER_PAD = 30  # px in OCR coords (zoom=2); margin around figures/tables
+                       # for filtering out stray axis labels and tick marks
+
+
+def _capped_padded_bbox(
+    bbox: list[float],
+    obstacles: list[list[float]],
+    pad: float,
+) -> list[float]:
+    """Pad a bbox by `pad` on each side, but cap the expansion so the
+    padded bbox doesn't cross into any neighboring obstacle bbox.
+
+    Used to extend figure/table regions so OCR axis labels just outside
+    the detected picture get filtered, without accidentally swallowing
+    the figure caption (which is typically only ~10–15 pymupdf pts /
+    20–30 OCR-zoom-2 px below the picture bbox).
+    """
+    x_min, y_min, x_max, y_max = bbox
+    padded = [x_min - pad, y_min - pad, x_max + pad, y_max + pad]
+    for ox_min, oy_min, ox_max, oy_max in obstacles:
+        # Below: cap bottom-pad
+        if oy_min >= y_max and ox_max > x_min and ox_min < x_max:
+            padded[3] = min(padded[3], oy_min)
+        # Above: cap top-pad
+        if oy_max <= y_min and ox_max > x_min and ox_min < x_max:
+            padded[1] = max(padded[1], oy_max)
+        # Left: cap left-pad
+        if ox_max <= x_min and oy_max > y_min and oy_min < y_max:
+            padded[0] = max(padded[0], ox_max)
+        # Right: cap right-pad
+        if ox_min >= x_max and oy_max > y_min and oy_min < y_max:
+            padded[2] = min(padded[2], ox_min)
+    return padded
+
+
+def _merge_adjacent_bboxes(
+    boxes: list[dict], gap_threshold: float = _BBOX_MERGE_GAP,
+) -> list[dict]:
+    """Iteratively union picture bboxes whose axis-aligned gap is small.
+
+    pymupdf4llm sometimes splits a single figure (panels, axis-label
+    strip, sub-panels) into separate picture bboxes. We treat two bboxes
+    as the same figure when both their horizontal and vertical
+    separations are <= gap_threshold (negative separation = overlap).
+    """
+    bboxes = [list(b["bbox"]) for b in boxes]
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(bboxes)):
+            for j in range(i + 1, len(bboxes)):
+                a, b = bboxes[i], bboxes[j]
+                h_sep = max(a[0], b[0]) - min(a[2], b[2])
+                v_sep = max(a[1], b[1]) - min(a[3], b[3])
+                if h_sep <= gap_threshold and v_sep <= gap_threshold:
+                    a[0] = min(a[0], b[0])
+                    a[1] = min(a[1], b[1])
+                    a[2] = max(a[2], b[2])
+                    a[3] = max(a[3], b[3])
+                    bboxes.pop(j)
+                    merged = True
+                    break
+            if merged:
+                break
+    return [{"class": "picture", "bbox": tuple(bb)} for bb in bboxes]
+
+
+def _significant_picture_boxes(page_boxes: list[dict]) -> list[dict]:
+    """Return picture-class boxes after merging adjacent regions and
+    filtering by minimum dimension.
+
+    Used by both auto_summarize_pdf (to choose what to crop and send to
+    Gemini) and the OCR pipeline (to choose what to filter out of OCR
+    text). Keeping them aligned ensures summary index N maps to the
+    same bbox in both passes.
+    """
+    pictures = [b for b in page_boxes if b["class"] == "picture"]
+    merged = _merge_adjacent_bboxes(pictures)
+    return [
+        b for b in merged
+        if (b["bbox"][2] - b["bbox"][0]) > _MIN_FIGURE_DIM
+        and (b["bbox"][3] - b["bbox"][1]) > _MIN_FIGURE_DIM
+    ]
+
+
 def _find_pdf_image_summary(
     base_dir: Path, pdf_stem: str, page_num: int, image_index: int,
     suffix: str, encoding: str,
@@ -237,24 +323,32 @@ def extract_text_from_pdf_ocr(
     zoom = 2  # must match the rendering matrix below
     page_picture_bboxes: list[list[list[float]]] = []
     page_table_bboxes: list[list[list[float]]] = []
+    page_obstacle_bboxes: list[list[list[float]]] = []
     page_table_markdowns: list[list[str]] = []
     for chunk in chunks:
+        page_boxes = chunk.get("page_boxes", [])
         pic_boxes = [
             [b["bbox"][0] * zoom, b["bbox"][1] * zoom,
              b["bbox"][2] * zoom, b["bbox"][3] * zoom]
-            for b in chunk.get("page_boxes", [])
-            if b["class"] == "picture"
-            and (b["bbox"][2] - b["bbox"][0]) > _MIN_FIGURE_DIM
-            and (b["bbox"][3] - b["bbox"][1]) > _MIN_FIGURE_DIM
+            for b in _significant_picture_boxes(page_boxes)
         ]
         page_picture_bboxes.append(pic_boxes)
         tbl_boxes = [
             [b["bbox"][0] * zoom, b["bbox"][1] * zoom,
              b["bbox"][2] * zoom, b["bbox"][3] * zoom]
-            for b in chunk.get("page_boxes", [])
+            for b in page_boxes
             if b["class"] == "table"
         ]
         page_table_bboxes.append(tbl_boxes)
+        # Obstacles cap how far we'll pad each picture/table for OCR
+        # filtering — captions and body text shouldn't be eaten.
+        obstacles = [
+            [b["bbox"][0] * zoom, b["bbox"][1] * zoom,
+             b["bbox"][2] * zoom, b["bbox"][3] * zoom]
+            for b in page_boxes
+            if b["class"] in ("caption", "text", "section-header", "list-item")
+        ]
+        page_obstacle_bboxes.append(obstacles)
         page_table_markdowns.append(
             _extract_table_markdowns(chunk["text"]) if tbl_boxes else []
         )
@@ -282,11 +376,22 @@ def extract_text_from_pdf_ocr(
         tbl_markdowns = page_table_markdowns[i] if i < len(page_table_markdowns) else []
         all_region_bboxes = pic_bboxes + tbl_bboxes
 
-        # Step 1: Filter OCR lines inside figure/table regions FIRST
+        # Step 1: Filter OCR lines inside figure/table regions FIRST.
+        # Pad each bbox by _OCR_FILTER_PAD so axis labels and tick marks
+        # just outside the detected region get filtered out too, but
+        # cap that padding so we don't swallow neighboring captions or
+        # body text. The padded bboxes are used ONLY for line filtering
+        # — the originals still drive virtual-line placement and
+        # reordering.
         ocr_lines = pred.text_lines
+        obstacles = page_obstacle_bboxes[i] if i < len(page_obstacle_bboxes) else []
         if all_region_bboxes:
+            padded_bboxes = [
+                _capped_padded_bbox(bb, obstacles, _OCR_FILTER_PAD)
+                for bb in all_region_bboxes
+            ]
             before_count = len(ocr_lines)
-            ocr_lines = _filter_figure_lines(ocr_lines, all_region_bboxes)
+            ocr_lines = _filter_figure_lines(ocr_lines, padded_bboxes)
             region_removed = before_count - len(ocr_lines)
         else:
             region_removed = 0

@@ -13,6 +13,7 @@ from google import genai
 from google.genai import types
 
 from .figures import _INCLUDEGRAPHICS_RE, _IMAGE_EXTENSIONS, _find_summary
+from .pdf import _significant_picture_boxes
 from .powerpoint import shape_has_embedded_image
 
 _PROMPT = (
@@ -402,8 +403,10 @@ def auto_summarize_pdf(path: Path, options: dict) -> None:
                 mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
                 embedded.append((base["image"], mime))
 
-        # Get picture boxes for cropped rendering fallback
-        pic_boxes = [b for b in chunk["page_boxes"] if b["class"] == "picture"]
+        # Get picture boxes for cropped rendering fallback. Must use the
+        # same filter as the OCR pipeline so summary index N maps to the
+        # same bbox there.
+        pic_boxes = _significant_picture_boxes(chunk["page_boxes"])
 
         # Build image list: prefer embedded, supplement with cropped boxes
         page_images: list[tuple[bytes, str]] = []

@@ -5,10 +5,12 @@ from unittest.mock import patch
 
 from latex_llm_cleaner.pdf import (
     _VirtualLine,
+    _capped_padded_bbox,
     _convert_surya_markup,
     _extract_table_markdowns,
     _filter_figure_lines,
     _reorder_text_lines,
+    _significant_picture_boxes,
     extract_text_from_pdf_ocr,
 )
 
@@ -73,6 +75,87 @@ def test_import_error_message(tmp_path):
     }):
         with pytest.raises(SystemExit):
             extract_text_from_pdf_ocr(pdf_path)
+
+
+# --- Picture bbox merging tests ---
+
+
+def test_significant_picture_boxes_merges_adjacent_strip():
+    """A figure split into a sub-min-dim strip + main picture should merge
+    into one bbox. Regression for science.adz4433.pdf page 2 where the
+    bar chart and y-axis label strip were separate picture regions, causing
+    summary index drift between auto_summarize_pdf and the OCR pipeline.
+    """
+    page_boxes = [
+        {"class": "picture", "bbox": (117, 41, 289, 224)},   # bar chart
+        {"class": "picture", "bbox": (37, 85, 87, 200)},     # narrow strip
+        {"class": "text", "bbox": (300, 100, 500, 200)},     # unrelated text
+    ]
+    result = _significant_picture_boxes(page_boxes)
+    assert len(result) == 1
+    bb = result[0]["bbox"]
+    assert bb == (37, 41, 289, 224)
+
+
+def test_significant_picture_boxes_merges_overlapping_panels():
+    """Two big picture regions that overlap should merge."""
+    page_boxes = [
+        {"class": "picture", "bbox": (36, 327, 326, 630)},   # Fig 2 main
+        {"class": "picture", "bbox": (161, 597, 325, 717)},  # overlapping sub
+    ]
+    result = _significant_picture_boxes(page_boxes)
+    assert len(result) == 1
+    assert result[0]["bbox"] == (36, 327, 326, 717)
+
+
+def test_significant_picture_boxes_keeps_separate_figures_apart():
+    """Two figures separated by more than the gap threshold stay distinct."""
+    page_boxes = [
+        {"class": "picture", "bbox": (37, 173, 289, 339)},   # Fig 3
+        {"class": "picture", "bbox": (37, 439, 290, 678)},   # Fig 4 (100px below)
+    ]
+    result = _significant_picture_boxes(page_boxes)
+    assert len(result) == 2
+
+
+def test_capped_padded_bbox_stops_at_caption_below():
+    """Padding the figure bbox shouldn't extend into a caption sitting
+    just below it. Regression: a 30px symmetric pad ate the first line
+    of the Subrina Fig 1 caption, which is only 10–14px below the picture.
+    """
+    pic = [50, 50, 200, 200]
+    caption = [50, 210, 200, 240]  # 10px gap below the picture
+    padded = _capped_padded_bbox(pic, [caption], pad=30)
+    assert padded[3] == 210  # capped at caption top, not 230
+
+
+def test_capped_padded_bbox_extends_when_no_obstacle():
+    """With no obstacles, padding extends fully on each side."""
+    pic = [50, 50, 200, 200]
+    padded = _capped_padded_bbox(pic, [], pad=30)
+    assert padded == [20, 20, 230, 230]
+
+
+def test_capped_padded_bbox_caps_each_side_independently():
+    """Obstacles on different sides cap their respective directions."""
+    pic = [100, 100, 200, 200]
+    obstacles = [
+        [100, 220, 200, 240],  # below, gap=20
+        [50, 100, 80, 200],    # left, gap=20
+    ]
+    padded = _capped_padded_bbox(pic, obstacles, pad=30)
+    assert padded[0] == 80    # left capped
+    assert padded[1] == 70    # top uncapped (no obstacle above)
+    assert padded[2] == 230   # right uncapped
+    assert padded[3] == 220   # bottom capped
+
+
+def test_significant_picture_boxes_drops_too_small_unmerged():
+    """A small isolated picture (e.g. an icon) is dropped."""
+    page_boxes = [
+        {"class": "picture", "bbox": (10, 10, 50, 50)},  # too small, no merge
+    ]
+    assert _significant_picture_boxes(page_boxes) == []
 
 
 # --- Column reordering and line number filtering tests ---

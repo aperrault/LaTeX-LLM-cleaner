@@ -30,7 +30,7 @@ _TABLE_PROMPT = (
     "markdown table syntax. Do not summarize or interpret the data."
 )
 
-_MODEL = "gemini-3-flash-preview"
+_MODEL = "gemini-3.5-flash"
 
 _MAX_WORKERS = 4
 

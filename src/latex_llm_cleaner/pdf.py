@@ -168,14 +168,14 @@ def _replace_picture_markers(
         nonlocal image_index
         w, h = int(m.group(1)), int(m.group(2))
         if w <= _MIN_FIGURE_DIM or h <= _MIN_FIGURE_DIM:
-            return m.group(0)  # keep small markers as-is
+            return ""
         image_index += 1
         summary = _find_pdf_image_summary(
             base_dir, pdf_stem, page_num, image_index, suffix, encoding,
         )
         if summary:
             return f"[Image: {summary}]"
-        return m.group(0)
+        return ""
 
     return _PICTURE_MARKER_RE.sub(_replacer, text)
 

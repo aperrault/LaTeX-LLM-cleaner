@@ -2,7 +2,11 @@
 
 from pathlib import Path
 
-from latex_llm_cleaner.pdf import extract_text_from_pdf, _find_pdf_image_summary
+from latex_llm_cleaner.pdf import (
+    extract_text_from_pdf,
+    _find_pdf_image_summary,
+    _replace_picture_markers,
+)
 
 
 def _create_test_pdf(path: Path, pages: list[str]) -> None:
@@ -101,11 +105,27 @@ def test_extraction_drops_marker_without_summary(tmp_path):
     assert "Text after figure." in result
 
 
-def test_extraction_skips_small_markers(tmp_path):
-    """Small picture markers (formulas, decorations) should not be replaced."""
-    pdf_path = tmp_path / "test.pdf"
-    # thesis_onepage has small picture markers that should be kept
-    _create_test_pdf(pdf_path, ["Some text."])
-    result = extract_text_from_pdf(pdf_path)
-    # No images in a text-only PDF, so nothing to replace
-    assert "Some text." in result
+def test_small_picture_markers_dropped(tmp_path):
+    """Small pictures (formulas, decorations) are dropped without a summary
+    lookup, and do not consume the image index — only significant pictures do.
+    """
+    # A summary exists for the first *significant* image on the page.
+    (tmp_path / "doc_page1_image1_summary.txt").write_text("A real figure.")
+    text = (
+        "Before. "
+        "**==> picture [32 x 32] intentionally omitted <==** "
+        "Middle. "
+        "**==> picture [200 x 200] intentionally omitted <==** "
+        "After."
+    )
+    result = _replace_picture_markers(text, tmp_path, "doc", 1, "_summary.txt", "utf-8")
+
+    # The small marker is removed entirely (no marker spam).
+    assert "32 x 32" not in result
+    assert "intentionally omitted" not in result
+    # Because the small marker did not consume the index, image1 is the
+    # significant 200x200 picture, so its summary is the one inserted.
+    assert "[Image: A real figure.]" in result
+    assert "Before." in result
+    assert "Middle." in result
+    assert "After." in result

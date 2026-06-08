@@ -53,9 +53,14 @@ def expand_macros(content: str, base_dir: Path, options: dict) -> str:
         r"\\(?:Declare|Set)MathAlphabet\{[^}]*\}.*\n?", "", content
     )
 
-    # Strip \usepackage lines unless told to keep them
+    # Strip rendering-only preamble unless told to keep it. These commands
+    # carry no semantic content for an LLM (fonts, colors, TikZ libraries,
+    # theorem declarations whose environments stay self-explanatory in the
+    # body), so dropping them only removes noise.
     if not options.get("keep_usepackage", False):
         content = re.sub(r"\\usepackage\s*(\[[^\]]*\])?\s*\{[^}]*\}\s*\n?", "", content)
+        for strip_re in _RENDER_STRIP_RES:
+            content = strip_re.sub("", content)
 
     # Multi-pass expansion
     max_passes = 10
@@ -75,6 +80,15 @@ def expand_macros(content: str, base_dir: Path, options: dict) -> str:
                 f"  Warning: macro expansion did not stabilize after {max_passes} passes",
                 file=sys.stderr,
             )
+
+    # Collapse rendering-only font wrappers AFTER expansion: user macros (e.g.
+    # \mauve -> {\fontfamily{bch}\selectfont{\textsc{Mauve}}}\xspace) only
+    # produce these wrappers once expanded, so this must run on the result.
+    content = _collapse_font_wrappers(content)
+    # Drop any remaining bare \fontfamily{..}\selectfont font switches (e.g.
+    # applied to a whole tikzpicture); after the collapse above these wrap no
+    # content and are pure rendering directives.
+    content = re.sub(r"\\fontfamily\s*\{[^}]*\}\s*\\selectfont\b[ \t]*\n?", "", content)
 
     # Collapse runs of 3+ blank lines into a single blank line
     content = re.sub(r"\n{3,}", "\n\n", content)
@@ -138,6 +152,75 @@ def _find_bracket_group(content: str, start: int) -> tuple[str, int] | None:
     if depth != 0:
         return None
     return content[start + 1 : i - 1], i
+
+
+# ---------------------------------------------------------------------------
+# Rendering-only preamble stripping
+# ---------------------------------------------------------------------------
+
+# Commands that exist purely for typeset rendering and carry no meaning for an
+# LLM. Each pattern also consumes a trailing newline so whole lines disappear.
+_RENDER_STRIP_RES = [
+    # TikZ / pgfplots / tcolorbox library and setup directives (single {..} arg)
+    re.compile(
+        r"\\(?:usetikzlibrary|usepgfplotslibrary|tcbuselibrary|tcbset)\s*"
+        r"\{[^}]*\}\s*\n?"
+    ),
+    # \definecolor{name}{model}{spec}
+    re.compile(r"\\definecolor\s*\{[^}]*\}\s*\{[^}]*\}\s*\{[^}]*\}\s*\n?"),
+    # \newtheorem{env}[shared]{Title}  or  \newtheorem{env}{Title}[reset]
+    re.compile(
+        r"\\newtheorem\*?\s*\{[^}]*\}\s*(?:\[[^\]]*\])?\s*\{[^}]*\}\s*"
+        r"(?:\[[^\]]*\])?\s*\n?"
+    ),
+    # \normalfont as a standalone directive
+    re.compile(r"\\normalfont\b[ \t]*\n?"),
+]
+
+# Opening of a font wrapper: {\fontfamily{..}\selectfont ...
+_FONT_WRAPPER_PREFIX_RE = re.compile(
+    r"\{\s*\\fontfamily\s*\{[^}]*\}\s*\\selectfont\b\s*"
+)
+
+
+_XSPACE_RE = re.compile(r"\\xspace\b")
+
+
+def _collapse_font_wrappers(content: str) -> str:
+    """Replace {\\fontfamily{..}\\selectfont X}\\xspace wrappers with just X.
+
+    The font family and \\selectfont only affect rendering; only the wrapped
+    content matters to an LLM. A trailing \\xspace is consumed as well.
+
+    Runs to a fixed point so that nested wrappers (e.g. a \\fontfamily{cmss}
+    node containing a \\fontfamily{bch} span) all collapse: each pass peels off
+    the outermost wrapper, exposing any inner one for the next pass.
+    """
+    for _ in range(10):
+        result: list[str] = []
+        pos = 0
+        for m in _FONT_WRAPPER_PREFIX_RE.finditer(content):
+            if m.start() < pos:
+                continue  # already inside a previously consumed wrapper
+            group = _find_brace_group(content, m.start())
+            if group is None:
+                continue
+            inner, end = group
+            # `inner` includes the \fontfamily{..}\selectfont prefix; drop it.
+            prefix_len = m.end() - (m.start() + 1)
+            body = inner[prefix_len:]
+            xspace = _XSPACE_RE.match(content, end)
+            if xspace:
+                end = xspace.end()
+            result.append(content[pos : m.start()])
+            result.append(body)
+            pos = end
+        result.append(content[pos:])
+        collapsed = "".join(result)
+        if collapsed == content:
+            return content
+        content = collapsed
+    return content
 
 
 # ---------------------------------------------------------------------------
@@ -257,12 +340,21 @@ def _parse_declaremathoperator(
         while pos < len(content) and content[pos] in " \t\n":
             pos += 1
 
-        # Extract command name {\\name}
-        name_result = _find_brace_group(content, pos)
-        if name_result is None:
-            continue
-        name_inner, pos = name_result
-        name_inner = name_inner.strip()
+        # Extract command name: either braced {\name} or bare \name.
+        # Both forms are valid LaTeX, e.g. \DeclareMathOperator{\sign}{sign}
+        # and \DeclareMathOperator\sign{sign}.
+        if pos < len(content) and content[pos] == "{":
+            name_result = _find_brace_group(content, pos)
+            if name_result is None:
+                continue
+            name_inner, pos = name_result
+            name_inner = name_inner.strip()
+        else:
+            name_match = re.compile(r"\\[a-zA-Z@]+").match(content, pos)
+            if name_match is None:
+                continue
+            name_inner = name_match.group(0)
+            pos = name_match.end()
         if not name_inner.startswith("\\"):
             continue
         name = name_inner[1:]

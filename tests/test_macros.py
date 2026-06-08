@@ -186,6 +186,21 @@ class TestDeclareMathOperator:
         result = expand_macros(content, Path("."), opts)
         assert "\\operatorname*{arg\\,max}" in result
 
+    def test_bare_name(self, opts):
+        # \DeclareMathOperator\sign{sign} (name not braced) is valid LaTeX and
+        # must be inlined and removed just like the braced form.
+        content = "\\DeclareMathOperator\\sign{sign}\n$\\sign(x)$"
+        result = expand_macros(content, Path("."), opts)
+        assert "\\operatorname{sign}" in result
+        assert "\\DeclareMathOperator" not in result
+        assert "\\sign" not in result
+
+    def test_bare_name_star(self, opts):
+        content = "\\DeclareMathOperator*\\argmax{arg\\,max}\n$\\argmax_x$"
+        result = expand_macros(content, Path("."), opts)
+        assert "\\operatorname*{arg\\,max}" in result
+        assert "\\DeclareMathOperator" not in result
+
 
 # ---------------------------------------------------------------------------
 # Nested macros (multi-pass)
@@ -378,3 +393,92 @@ class TestUsepackageStripping:
         result = expand_macros(content, Path("."), opts)
         assert "\\usepackage" not in result
         assert "text" in result
+
+
+# ---------------------------------------------------------------------------
+# Rendering-only preamble stripping
+# ---------------------------------------------------------------------------
+
+
+class TestRenderingStrip:
+    def test_tikz_and_color_directives(self, opts):
+        content = (
+            "\\usetikzlibrary{shapes,positioning}\n"
+            "\\usepgfplotslibrary{groupplots}\n"
+            "\\tcbuselibrary{skins}\n"
+            "\\tcbset{enhanced}\n"
+            "\\definecolor{azure}{rgb}{0.0, 0.5, 1.0}\n"
+            "\\normalfont\n"
+            "body text"
+        )
+        result = expand_macros(content, Path("."), opts)
+        for cmd in (
+            "\\usetikzlibrary",
+            "\\usepgfplotslibrary",
+            "\\tcbuselibrary",
+            "\\tcbset",
+            "\\definecolor",
+            "\\normalfont",
+        ):
+            assert cmd not in result
+        assert "body text" in result
+
+    def test_newtheorem_stripped_environments_kept(self, opts):
+        content = (
+            "\\newtheorem{theorem}{Theorem}\n"
+            "\\newtheorem{lemma}[theorem]{Lemma}\n"
+            "\\begin{theorem}A claim.\\end{theorem}"
+        )
+        result = expand_macros(content, Path("."), opts)
+        assert "\\newtheorem" not in result
+        # The environment itself stays — it is self-explanatory to an LLM.
+        assert "\\begin{theorem}" in result
+
+    def test_kept_when_keep_usepackage(self, opts):
+        opts["keep_usepackage"] = True
+        content = "\\usetikzlibrary{shapes}\n\\definecolor{c}{rgb}{0,0,0}\ntext"
+        result = expand_macros(content, Path("."), opts)
+        assert "\\usetikzlibrary{shapes}" in result
+        assert "\\definecolor" in result
+
+
+# ---------------------------------------------------------------------------
+# Font wrapper collapse
+# ---------------------------------------------------------------------------
+
+
+class TestFontWrapperCollapse:
+    def test_basic_collapse(self, opts):
+        content = "Use {\\fontfamily{bch}\\selectfont{\\textsc{Mauve}}}\\xspace here"
+        result = expand_macros(content, Path("."), opts)
+        assert "\\fontfamily" not in result
+        assert "\\selectfont" not in result
+        assert "\\xspace" not in result
+        assert "{\\textsc{Mauve}}" in result
+
+    def test_xspace_followed_by_subscript(self, opts):
+        # \xspace immediately followed by _f (no word boundary) must still drop
+        # the wrapper; the trailing \xspace may remain but the font junk goes.
+        content = "${\\fontfamily{bch}\\selectfont{\\textsc{Mauve}}}\\xspace_f$"
+        result = expand_macros(content, Path("."), opts)
+        assert "\\fontfamily" not in result
+        assert "{\\textsc{Mauve}}" in result
+
+    def test_nested_wrappers(self, opts):
+        # An outer \fontfamily{cmss} node containing an inner \fontfamily{bch}
+        # span: both must collapse (fixed-point iteration).
+        content = (
+            "{\\fontfamily{cmss}\\selectfont "
+            "x {\\fontfamily{bch}\\selectfont{\\textsc{Mauve}}}\\xspace y}"
+        )
+        result = expand_macros(content, Path("."), opts)
+        assert "\\fontfamily" not in result
+        assert "\\selectfont" not in result
+        assert "\\textsc{Mauve}" in result
+
+    def test_bare_fontfamily_selectfont_dropped(self, opts):
+        content = "\\begin{tikzpicture}\n\\fontfamily{cmss}\\selectfont\n\\node {a};\n\\end{tikzpicture}"
+        result = expand_macros(content, Path("."), opts)
+        assert "\\fontfamily" not in result
+        assert "\\selectfont" not in result
+        assert "\\node {a};" in result

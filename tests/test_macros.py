@@ -441,6 +441,21 @@ class TestRenderingStrip:
         assert "\\usetikzlibrary{shapes}" in result
         assert "\\definecolor" in result
 
+    def test_macro_generated_directives_stripped(self, opts):
+        # Rendering directives produced by macro expansion (not present
+        # literally in the source) must still be stripped — stripping runs
+        # after expansion for exactly this reason.
+        content = (
+            "\\newcommand{\\mycolors}{\\definecolor{C0}{HTML}{1F77B4}}\n"
+            "\\newcommand{\\setuptikz}{\\usetikzlibrary{shapes}}\n"
+            "\\mycolors\n\\setuptikz\n"
+            "body text"
+        )
+        result = expand_macros(content, Path("."), opts)
+        assert "\\definecolor" not in result
+        assert "\\usetikzlibrary" not in result
+        assert "body text" in result
+
 
 # ---------------------------------------------------------------------------
 # Font wrapper collapse

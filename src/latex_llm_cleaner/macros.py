@@ -48,20 +48,6 @@ def expand_macros(content: str, base_dir: Path, options: dict) -> str:
             end += 1
         content = content[:start] + content[end:]
 
-    # Remove \DeclareMathAlphabet and \SetMathAlphabet lines
-    content = re.sub(
-        r"\\(?:Declare|Set)MathAlphabet\{[^}]*\}.*\n?", "", content
-    )
-
-    # Strip rendering-only preamble unless told to keep it. These commands
-    # carry no semantic content for an LLM (fonts, colors, TikZ libraries,
-    # theorem declarations whose environments stay self-explanatory in the
-    # body), so dropping them only removes noise.
-    if not options.get("keep_usepackage", False):
-        content = re.sub(r"\\usepackage\s*(\[[^\]]*\])?\s*\{[^}]*\}\s*\n?", "", content)
-        for strip_re in _RENDER_STRIP_RES:
-            content = strip_re.sub("", content)
-
     # Multi-pass expansion
     max_passes = 10
     for pass_num in range(max_passes):
@@ -81,9 +67,28 @@ def expand_macros(content: str, base_dir: Path, options: dict) -> str:
                 file=sys.stderr,
             )
 
-    # Collapse rendering-only font wrappers AFTER expansion: user macros (e.g.
-    # \mauve -> {\fontfamily{bch}\selectfont{\textsc{Mauve}}}\xspace) only
-    # produce these wrappers once expanded, so this must run on the result.
+    # All rendering-noise removal runs AFTER expansion. Macro expansion can
+    # only ever manufacture these rendering tokens (e.g. \mauve ->
+    # {\fontfamily{bch}\selectfont...}, or a \mycolors macro -> \definecolor),
+    # never destroy a well-formed one, so stripping the fully-expanded text is
+    # strictly more complete than stripping the source.
+
+    # Remove \DeclareMathAlphabet and \SetMathAlphabet lines
+    content = re.sub(
+        r"\\(?:Declare|Set)MathAlphabet\{[^}]*\}.*\n?", "", content
+    )
+
+    # Strip rendering-only preamble unless told to keep it. These commands
+    # carry no semantic content for an LLM (fonts, colors, TikZ libraries,
+    # theorem declarations whose environments stay self-explanatory in the
+    # body), so dropping them only removes noise.
+    if not options.get("keep_usepackage", False):
+        content = re.sub(r"\\usepackage\s*(\[[^\]]*\])?\s*\{[^}]*\}\s*\n?", "", content)
+        for strip_re in _RENDER_STRIP_RES:
+            content = strip_re.sub("", content)
+
+    # Collapse rendering-only font wrappers down to their content, e.g.
+    # {\fontfamily{bch}\selectfont{\textsc{Mauve}}}\xspace -> {\textsc{Mauve}}
     content = _collapse_font_wrappers(content)
     # Drop any remaining bare \fontfamily{..}\selectfont font switches (e.g.
     # applied to a whole tikzpicture); after the collapse above these wrap no

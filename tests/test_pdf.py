@@ -87,14 +87,18 @@ def test_extraction_inserts_summary(tmp_path):
     assert "intentionally omitted" not in result
 
 
-def test_extraction_keeps_marker_without_summary(tmp_path):
-    """Should keep picture markers when no summary exists."""
+def test_extraction_drops_marker_without_summary(tmp_path):
+    """Should silently drop picture markers when no summary exists."""
     pdf_path = tmp_path / "test.pdf"
     _create_pdf_with_image(pdf_path)
 
     result = extract_text_from_pdf(pdf_path)
-    assert "intentionally omitted" in result
+    # No summary -> the picture is dropped entirely, leaving no marker spam.
+    assert "intentionally omitted" not in result
     assert "[Image:" not in result
+    # Surrounding text is preserved.
+    assert "Text before figure." in result
+    assert "Text after figure." in result
 
 
 def test_extraction_skips_small_markers(tmp_path):

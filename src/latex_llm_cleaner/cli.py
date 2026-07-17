@@ -178,7 +178,9 @@ def main(argv: list[str] | None = None) -> None:
             "google_api_key": args.google_api_key or os.environ.get("GOOGLE_API_KEY"),
         }
 
-        result = run_pipeline(content, Path.cwd(), options)
+        # Resolve includes/graphics relative to the .tex file's directory
+        # (the compilation root), not the arbitrary invocation directory.
+        result = run_pipeline(content, input_path.parent.resolve(), options)
 
     if args.output:
         args.output.write_text(result, encoding=args.encoding)

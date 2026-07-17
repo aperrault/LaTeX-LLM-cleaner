@@ -12,7 +12,13 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 
-from .figures import _INCLUDEGRAPHICS_RE, _IMAGE_EXTENSIONS, _find_summary
+from .figures import (
+    _INCLUDEGRAPHICS_RE,
+    _IMAGE_EXTENSIONS,
+    _find_summary,
+    _parse_graphicspath,
+    _search_roots,
+)
 from .pdf import _significant_picture_boxes
 from .powerpoint import shape_has_embedded_image
 
@@ -83,19 +89,26 @@ def _print_progress(done: int, total: int) -> None:
     print(f"\r  Summarizing: {done}/{total} done", end="", file=sys.stderr, flush=True)
 
 
-def _resolve_image_path(base_dir: Path, img_path_str: str) -> Path | None:
-    """Find the actual image file on disk, probing extensions if needed."""
-    img_path = base_dir / img_path_str
+def _resolve_image_path(
+    base_dir: Path, img_path_str: str, graphics_dirs: list[str] | None = None
+) -> Path | None:
+    """Find the actual image file on disk, probing extensions if needed.
 
-    if img_path.is_file():
-        return img_path
+    Searches ``base_dir`` and any ``\\graphicspath`` directories
+    (``graphics_dirs``) in LaTeX resolution order.
+    """
+    for root in _search_roots(base_dir, graphics_dirs):
+        img_path = root / img_path_str
 
-    # If no extension, try common image extensions
-    if img_path.suffix.lower() not in _IMAGE_EXTENSIONS:
-        for ext in _IMAGE_EXTENSIONS:
-            candidate = base_dir / (img_path_str + ext)
-            if candidate.is_file():
-                return candidate
+        if img_path.is_file():
+            return img_path
+
+        # If no extension, try common image extensions
+        if img_path.suffix.lower() not in _IMAGE_EXTENSIONS:
+            for ext in _IMAGE_EXTENSIONS:
+                candidate = root / (img_path_str + ext)
+                if candidate.is_file():
+                    return candidate
 
     return None
 
@@ -182,6 +195,8 @@ def auto_summarize_figures(content: str, base_dir: Path, options: dict) -> str:
     suffix = options.get("figure_summary_suffix", "_summary.txt")
     encoding = options.get("encoding", "utf-8")
 
+    graphics_dirs = _parse_graphicspath(content)
+
     # Collect unique image paths that need summaries
     seen: set[str] = set()
     work_items: list[tuple[str, Path, Path]] = []  # (label, image_path, summary_path)
@@ -192,14 +207,14 @@ def auto_summarize_figures(content: str, base_dir: Path, options: dict) -> str:
             continue
         seen.add(img_path_str)
 
-        existing = _find_summary(base_dir, img_path_str, suffix, encoding)
+        existing = _find_summary(base_dir, img_path_str, suffix, encoding, graphics_dirs)
         if existing is not None:
             if verbose:
                 print(f"  Skipping {img_path_str} (summary exists)", file=sys.stderr)
             skipped += 1
             continue
 
-        image_path = _resolve_image_path(base_dir, img_path_str)
+        image_path = _resolve_image_path(base_dir, img_path_str, graphics_dirs)
         if image_path is None:
             if verbose:
                 print(

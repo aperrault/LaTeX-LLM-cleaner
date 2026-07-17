@@ -247,6 +247,46 @@ def test_subdirectory_images(tmp_path, options):
     assert (figs_dir / "result_summary.txt").read_text() == "Result table."
 
 
+def test_graphicspath_resolves_images(tmp_path, options):
+    """Should locate images via \\graphicspath dirs and summarize next to them."""
+    proj = tmp_path / "Proj1"
+    proj.mkdir()
+    (proj / "mdp_img.png").write_bytes(b"\x89PNG fake")
+    figs = tmp_path / "proj2" / "figures"
+    figs.mkdir(parents=True)
+    (figs / "heatmap.png").write_bytes(b"\x89PNG fake2")
+
+    content = (
+        r"\graphicspath{{Proj1/}{proj2/}{proj2/figures/}}"
+        "\n"
+        r"\includegraphics{mdp_img.png}"
+        "\n"
+        r"\includegraphics{figures/heatmap.png}"
+    )
+
+    mock_genai = MagicMock()
+    mock_genai.Client.return_value = MagicMock()
+
+    with patch.dict(
+        "sys.modules",
+        {"google": MagicMock(), "google.genai": MagicMock()},
+    ):
+        with patch(
+            "latex_llm_cleaner.summarize._call_gemini",
+            return_value="A figure.",
+        ) as mock_call:
+            import latex_llm_cleaner.summarize as mod
+
+            with patch.dict(
+                mod.auto_summarize_figures.__globals__, {"genai": mock_genai}
+            ):
+                mod.auto_summarize_figures(content, tmp_path, options)
+
+    assert mock_call.call_count == 2
+    assert (proj / "mdp_img_summary.txt").read_text() == "A figure."
+    assert (figs / "heatmap_summary.txt").read_text() == "A figure."
+
+
 def test_deduplicates_images(tmp_path, options):
     """Should only call API once for duplicate image references."""
     img = tmp_path / "plot.png"

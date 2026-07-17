@@ -33,13 +33,42 @@ _CAPTION_RE = re.compile(r"\\caption\{((?:[^{}]|\{[^{}]*\})*)\}")
 # Matches \label{...}
 _LABEL_RE = re.compile(r"\\label\{([^}]+)\}")
 
+# Matches \graphicspath{{dir1/}{dir2/}...}
+_GRAPHICSPATH_RE = re.compile(r"\\graphicspath\s*\{((?:\s*\{[^}]*\}\s*)+)\}")
+
 _IMAGE_EXTENSIONS = (".png", ".pdf", ".jpg", ".jpeg", ".eps", ".svg")
+
+
+def _parse_graphicspath(content: str) -> list[str]:
+    """Extract directory prefixes declared via \\graphicspath.
+
+    ``\\graphicspath{{Proj1/}{proj2/figures/}}`` -> ``["Proj1/", "proj2/figures/"]``.
+    Returns an empty list when no (well-formed) \\graphicspath is present.
+    """
+    m = _GRAPHICSPATH_RE.search(content)
+    if m is None:
+        return []
+    return re.findall(r"\{([^}]*)\}", m.group(1))
+
+
+def _search_roots(base_dir: Path, graphics_dirs: list[str] | None) -> list[Path]:
+    """Directories to probe for an image, in LaTeX resolution order.
+
+    ``base_dir`` first, then each \\graphicspath directory joined onto it,
+    mirroring how LaTeX prepends each graphics path to the \\includegraphics
+    argument.
+    """
+    roots = [base_dir]
+    for d in graphics_dirs or []:
+        roots.append(base_dir / d)
+    return roots
 
 
 def substitute_figures(content: str, base_dir: Path, options: dict) -> str:
     verbose = options.get("verbose", False)
     suffix = options.get("figure_summary_suffix", "_summary.txt")
     encoding = options.get("encoding", "utf-8")
+    graphics_dirs = _parse_graphicspath(content)
 
     # Step 1: Replace figure environments that contain \includegraphics
     def replace_figure_env(m: re.Match) -> str:
@@ -51,7 +80,7 @@ def substitute_figures(content: str, base_dir: Path, options: dict) -> str:
             return full_match
 
         img_path_str = gfx_match.group(1).strip()
-        summary = _find_summary(base_dir, img_path_str, suffix, encoding)
+        summary = _find_summary(base_dir, img_path_str, suffix, encoding, graphics_dirs)
 
         if summary is None:
             if verbose:
@@ -79,7 +108,7 @@ def substitute_figures(content: str, base_dir: Path, options: dict) -> str:
     # Step 2: Replace standalone \includegraphics (not inside figure env)
     def replace_standalone(m: re.Match) -> str:
         img_path_str = m.group(1).strip()
-        summary = _find_summary(base_dir, img_path_str, suffix, encoding)
+        summary = _find_summary(base_dir, img_path_str, suffix, encoding, graphics_dirs)
 
         if summary is None:
             if verbose:
@@ -96,28 +125,37 @@ def substitute_figures(content: str, base_dir: Path, options: dict) -> str:
 
 
 def _find_summary(
-    base_dir: Path, img_path_str: str, suffix: str, encoding: str
+    base_dir: Path,
+    img_path_str: str,
+    suffix: str,
+    encoding: str,
+    graphics_dirs: list[str] | None = None,
 ) -> str | None:
-    """Look for a summary file corresponding to the image path."""
-    img_path = base_dir / img_path_str
+    """Look for a summary file corresponding to the image path.
 
-    # If the image has an extension, strip it
-    if img_path.suffix.lower() in _IMAGE_EXTENSIONS:
-        stem_path = img_path.with_suffix("")
-    else:
-        stem_path = img_path
+    Probes ``base_dir`` and any ``\\graphicspath`` directories (``graphics_dirs``)
+    in LaTeX resolution order.
+    """
+    for root in _search_roots(base_dir, graphics_dirs):
+        img_path = root / img_path_str
 
-    summary_path = Path(str(stem_path) + suffix)
-    if summary_path.is_file():
-        return summary_path.read_text(encoding=encoding).strip()
+        # If the image has an extension, strip it
+        if img_path.suffix.lower() in _IMAGE_EXTENSIONS:
+            stem_path = img_path.with_suffix("")
+        else:
+            stem_path = img_path
 
-    # If no extension was given, try common extensions to find the stem
-    if img_path.suffix.lower() not in _IMAGE_EXTENSIONS:
-        for ext in _IMAGE_EXTENSIONS:
-            candidate = base_dir / (img_path_str + ext)
-            if candidate.is_file():
-                summary_path = Path(str(candidate.with_suffix("")) + suffix)
-                if summary_path.is_file():
-                    return summary_path.read_text(encoding=encoding).strip()
+        summary_path = Path(str(stem_path) + suffix)
+        if summary_path.is_file():
+            return summary_path.read_text(encoding=encoding).strip()
+
+        # If no extension was given, try common extensions to find the stem
+        if img_path.suffix.lower() not in _IMAGE_EXTENSIONS:
+            for ext in _IMAGE_EXTENSIONS:
+                candidate = root / (img_path_str + ext)
+                if candidate.is_file():
+                    summary_path = Path(str(candidate.with_suffix("")) + suffix)
+                    if summary_path.is_file():
+                        return summary_path.read_text(encoding=encoding).strip()
 
     return None

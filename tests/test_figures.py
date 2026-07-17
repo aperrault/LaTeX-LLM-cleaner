@@ -73,3 +73,40 @@ def test_subdirectory_image(tmp_path):
     content = "\\includegraphics{figs/chart.png}"
     result = substitute_figures(content, tmp_path, OPTS)
     assert "Revenue chart." in result
+
+
+def test_graphicspath_resolves_summary(tmp_path):
+    # Image summary lives in a \graphicspath directory, not next to the doc.
+    proj = tmp_path / "Proj1"
+    proj.mkdir()
+    (proj / "diagram_summary.txt").write_text("An MDP diagram.")
+    content = (
+        "\\graphicspath{{Proj1/}{proj2/}}\n"
+        "\\includegraphics{diagram.png}"
+    )
+    result = substitute_figures(content, tmp_path, OPTS)
+    assert "% [Image: An MDP diagram.]" in result
+
+
+def test_graphicspath_prepended_to_subdir_arg(tmp_path):
+    # LaTeX prepends each graphicspath dir to the argument, so a
+    # `figures/x.png` reference can live under `proj2/figures/x.png`.
+    figs = tmp_path / "proj2" / "figures"
+    figs.mkdir(parents=True)
+    (figs / "heatmap_summary.txt").write_text("A heatmap.")
+    content = (
+        "\\graphicspath{{Proj1/}{proj2/}}\n"
+        "\\includegraphics{figures/heatmap.png}"
+    )
+    result = substitute_figures(content, tmp_path, OPTS)
+    assert "% [Image: A heatmap.]" in result
+
+
+def test_no_graphicspath_unchanged(tmp_path):
+    # Without \graphicspath, an image only in a subdir is not found.
+    proj = tmp_path / "Proj1"
+    proj.mkdir()
+    (proj / "diagram_summary.txt").write_text("An MDP diagram.")
+    content = "\\includegraphics{diagram.png}"
+    result = substitute_figures(content, tmp_path, OPTS)
+    assert "\\includegraphics{diagram.png}" in result

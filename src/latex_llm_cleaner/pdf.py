@@ -20,6 +20,13 @@ _PICTURE_MARKER_RE = re.compile(
 _BBOX_MERGE_GAP = 30  # px in pymupdf coords; sub-bboxes within this gap merge
 _OCR_FILTER_PAD = 30  # px in OCR coords (zoom=2); margin around figures/tables
                        # for filtering out stray axis labels and tick marks
+# A line counts as crossing the page midline only if it extends this
+# fraction of the page width past it on both sides (guards against
+# column lines that graze a narrow gutter).
+_MIDLINE_TOLERANCE = 0.01
+# If at least this fraction of a page's lines cross the midline, the page
+# is single-column and two-column reordering must not be applied.
+_SINGLE_COLUMN_MIN_STRADDLE = 0.5
 
 
 def _capped_padded_bbox(
@@ -64,6 +71,9 @@ def _merge_adjacent_bboxes(
     separations are <= gap_threshold (negative separation = overlap).
     """
     bboxes = [list(b["bbox"]) for b in boxes]
+    # Character spans of each member box in the page text (pymupdf4llm's
+    # "pos"), kept so callers can splice summaries into the text.
+    spans = [[tuple(b["pos"])] if b.get("pos") is not None else [] for b in boxes]
     merged = True
     while merged:
         merged = False
@@ -78,11 +88,15 @@ def _merge_adjacent_bboxes(
                     a[2] = max(a[2], b[2])
                     a[3] = max(a[3], b[3])
                     bboxes.pop(j)
+                    spans[i].extend(spans.pop(j))
                     merged = True
                     break
             if merged:
                 break
-    return [{"class": "picture", "bbox": tuple(bb)} for bb in bboxes]
+    return [
+        {"class": "picture", "bbox": tuple(bb), "pos_spans": sorted(sp)}
+        for bb, sp in zip(bboxes, spans)
+    ]
 
 
 def _significant_picture_boxes(page_boxes: list[dict]) -> list[dict]:
@@ -101,6 +115,23 @@ def _significant_picture_boxes(page_boxes: list[dict]) -> list[dict]:
         if (b["bbox"][2] - b["bbox"][0]) > _MIN_FIGURE_DIM
         and (b["bbox"][3] - b["bbox"][1]) > _MIN_FIGURE_DIM
     ]
+
+
+def _layout_chunks(path: Path, pages: list[int] | None = None) -> list[dict]:
+    """Run pymupdf4llm's layout analysis with its selective OCR disabled.
+
+    pymupdf4llm defaults to use_ocr=True, which re-renders any page it
+    suspects of holding text inside images (a typical figure page) and
+    OCRs it with Tesseract when that is installed. The OCR'd page loses
+    the layout model's picture boxes, so figure masking, auto-summarize
+    and picture dropping silently stop working on exactly the pages that
+    carry figures, and only on machines that have Tesseract. Keep it off
+    here; extract_text_from_pdf handles pages with no text layer itself.
+    """
+    kwargs: dict = {"page_chunks": True, "use_ocr": False}
+    if pages is not None:
+        kwargs["pages"] = pages
+    return pymupdf4llm.to_markdown(str(path), **kwargs)
 
 
 def _find_pdf_image_summary(
@@ -157,6 +188,41 @@ def _replace_table_blocks(
     return "\n".join(result)
 
 
+def _insert_picture_summaries(
+    text: str, page_boxes: list[dict], base_dir: Path, pdf_stem: str,
+    page_num: int, suffix: str, encoding: str,
+) -> str:
+    """Splice image summaries into a page's text at each significant
+    picture's position, or drop the picture's slot when no summary exists.
+
+    Works from the layout boxes' character spans rather than from the
+    "picture intentionally omitted" text marker: pymupdf4llm 1.27 emits
+    that marker, 1.28 emits nothing at all for a picture, and relying on
+    the marker meant summaries silently stopped being inserted on 1.28.
+    Image index N here is the N-th box from _significant_picture_boxes,
+    matching auto_summarize_pdf and the OCR pipeline.
+    """
+    edits: list[tuple[int, int, str]] = []
+    for img_idx, box in enumerate(_significant_picture_boxes(page_boxes), start=1):
+        spans = box.get("pos_spans") or []
+        if not spans:
+            continue
+        summary = _find_pdf_image_summary(
+            base_dir, pdf_stem, page_num, img_idx, suffix, encoding,
+        )
+        start, end = spans[0]
+        # Own paragraph: 1.28's span is just the blank line before the next
+        # text block, so without padding the summary would glue onto it.
+        edits.append((start, end, f"\n\n[Image: {summary}]\n\n" if summary else ""))
+        # Extra spans belong to sub-boxes merged into this figure.
+        edits.extend((s, e, "") for s, e in spans[1:])
+    for start, end, repl in sorted(edits, reverse=True):
+        text = text[:start] + repl + text[end:]
+    # Anything left is a marker for a picture too small to count (1.27 only).
+    text = _PICTURE_MARKER_RE.sub("", text)
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
 def _replace_picture_markers(
     text: str, base_dir: Path, pdf_stem: str, page_num: int,
     suffix: str, encoding: str,
@@ -194,15 +260,24 @@ def extract_text_from_pdf(
         print(f"  Extracting {doc.page_count} pages...", file=sys.stderr)
         doc.close()
 
-    chunks = pymupdf4llm.to_markdown(str(path), page_chunks=True)
+    chunks = _layout_chunks(path)
+    # Pages with no text layer at all (scanned pages) still get pymupdf4llm's
+    # own OCR pass, if Tesseract is available.
+    scanned = [i for i, c in enumerate(chunks) if not c["text"].strip()]
+    if scanned:
+        ocr_chunks = pymupdf4llm.to_markdown(
+            str(path), page_chunks=True, pages=scanned,
+        )
+        for i, c in zip(scanned, ocr_chunks):
+            chunks[i] = c
     base_dir = path.parent.resolve()
     pdf_stem = path.stem
 
     pages = []
     for page_num, chunk in enumerate(chunks, start=1):
         text = chunk["text"]
-        text = _replace_picture_markers(
-            text, base_dir, pdf_stem, page_num,
+        text = _insert_picture_summaries(
+            text, chunk.get("page_boxes", []), base_dir, pdf_stem, page_num,
             figure_summary_suffix, encoding,
         )
         text = _replace_table_blocks(
@@ -319,7 +394,7 @@ def extract_text_from_pdf_ocr(
         print(f"  OCR processing {page_count} pages...", file=sys.stderr)
 
     # Get picture/table bounding boxes per page from pymupdf4llm structure analysis
-    chunks = pymupdf4llm.to_markdown(str(path), page_chunks=True)
+    chunks = _layout_chunks(path)
     zoom = 2  # must match the rendering matrix below
     page_picture_bboxes: list[list[list[float]]] = []
     page_table_bboxes: list[list[list[float]]] = []
@@ -503,21 +578,38 @@ def _reorder_text_lines(
             continue
         filtered.append(line)
 
-    # Step 2: Classify lines
-    full_width_threshold = page_width * 0.5
+    # Step 2: Detect single-column pages. In a two-column layout almost
+    # no line crosses the page midline (only titles and headers do), while
+    # in a single-column layout most body lines do. Applying the column
+    # heuristic to a single-column page scrambles centered display
+    # equations: a narrow centered line lands in whichever column its
+    # center is a fraction of a pixel closer to, and is then emitted out
+    # of order relative to its equation label at the margin.
+    if not filtered:
+        return []
+    tol = page_width * _MIDLINE_TOLERANCE
 
+    def straddles_midline(line):
+        return line.bbox[0] < page_mid - tol and line.bbox[2] > page_mid + tol
+
+    straddle_frac = sum(map(straddles_midline, filtered)) / len(filtered)
+    if straddle_frac >= _SINGLE_COLUMN_MIN_STRADDLE:
+        return sorted(filtered, key=lambda l: (l.bbox[1], l.bbox[0]))
+
+    # Step 3: Classify lines. Any line that genuinely crosses the midline
+    # is treated as full-width: in a two-column page a column line never
+    # does, so this catches centered equations and headers of any width.
     def classify(line):
         bbox = line.bbox
-        width = bbox[2] - bbox[0]
         center = (bbox[0] + bbox[2]) / 2
-        if bbox[0] < page_mid and bbox[2] > page_mid and width > full_width_threshold:
+        if straddles_midline(line):
             return "full"
         elif center < page_mid:
             return "left"
         else:
             return "right"
 
-    # Step 3: Build reading order with segment-aware flushing
+    # Step 4: Build reading order with segment-aware flushing
     sorted_lines = sorted(filtered, key=lambda l: l.bbox[1])
 
     # Compute flush y-values from region bboxes (figure/table boundaries)

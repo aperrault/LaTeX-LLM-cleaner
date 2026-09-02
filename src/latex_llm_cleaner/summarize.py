@@ -2,7 +2,6 @@
 
 import hashlib
 import mimetypes
-import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,7 +18,7 @@ from .figures import (
     _parse_graphicspath,
     _search_roots,
 )
-from .pdf import _significant_picture_boxes
+from .pdf import _layout_chunks, _significant_picture_boxes
 from .powerpoint import shape_has_embedded_image
 
 _PROMPT = (
@@ -356,12 +355,8 @@ def auto_summarize_pptx(path: Path, options: dict) -> None:
     _run_batch_summarize(work_items, api_key, encoding, verbose, skipped)
 
 
-# Minimum dimensions for a picture marker to be considered a real figure
+# Minimum dimensions for an embedded image to be considered a real figure
 _MIN_FIGURE_DIM = 64
-
-_PICTURE_MARKER_RE = re.compile(
-    r"\*\*==> picture \[(\d+) x (\d+)\] intentionally omitted <==\*\*"
-)
 
 
 def auto_summarize_pdf(path: Path, options: dict) -> None:
@@ -372,7 +367,6 @@ def auto_summarize_pdf(path: Path, options: dict) -> None:
     files next to the PDF.
     """
     import fitz
-    import pymupdf4llm
 
     api_key = options.get("google_api_key")
     if not api_key:
@@ -389,7 +383,7 @@ def auto_summarize_pdf(path: Path, options: dict) -> None:
     pdf_stem = path.stem
 
     doc = fitz.open(path)
-    chunks = pymupdf4llm.to_markdown(str(path), page_chunks=True)
+    chunks = _layout_chunks(path)
 
     # Collect work items: (stem, image_bytes, mime_type, summary_path)
     work_items: list[tuple[str, bytes, str, Path]] = []
@@ -398,14 +392,12 @@ def auto_summarize_pdf(path: Path, options: dict) -> None:
     for page_num, chunk in enumerate(chunks, start=1):
         page = doc[page_num - 1]
 
-        # Count significant picture markers on this page
-        markers = _PICTURE_MARKER_RE.findall(chunk["text"])
-        significant_markers = [
-            (int(w), int(h)) for w, h in markers
-            if int(w) > _MIN_FIGURE_DIM and int(h) > _MIN_FIGURE_DIM
-        ]
-
-        if not significant_markers:
+        # Significant picture boxes on this page. Same filter as the OCR
+        # pipeline and extract_text_from_pdf, so summary index N maps to
+        # the same figure everywhere. (Layout boxes, not the text marker:
+        # pymupdf4llm 1.28 no longer emits a marker for pictures.)
+        pic_boxes = _significant_picture_boxes(chunk["page_boxes"])
+        if not pic_boxes:
             continue
 
         # Strategy: try embedded images first, fall back to picture box crops
@@ -418,17 +410,12 @@ def auto_summarize_pdf(path: Path, options: dict) -> None:
                 mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
                 embedded.append((base["image"], mime))
 
-        # Get picture boxes for cropped rendering fallback. Must use the
-        # same filter as the OCR pipeline so summary index N maps to the
-        # same bbox there.
-        pic_boxes = _significant_picture_boxes(chunk["page_boxes"])
-
         # Build image list: prefer embedded, supplement with cropped boxes
         page_images: list[tuple[bytes, str]] = []
         if embedded:
             page_images.extend(embedded)
         # If we have more significant markers than embedded images, use box crops
-        remaining = len(significant_markers) - len(embedded)
+        remaining = len(pic_boxes) - len(embedded)
         if remaining > 0 and pic_boxes:
             for box in pic_boxes[:remaining]:
                 bbox = fitz.Rect(box["bbox"])

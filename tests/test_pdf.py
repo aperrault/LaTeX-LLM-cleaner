@@ -5,6 +5,7 @@ from pathlib import Path
 from latex_llm_cleaner.pdf import (
     extract_text_from_pdf,
     _find_pdf_image_summary,
+    _insert_picture_summaries,
     _replace_picture_markers,
 )
 
@@ -129,3 +130,72 @@ def test_small_picture_markers_dropped(tmp_path):
     assert "Before." in result
     assert "Middle." in result
     assert "After." in result
+
+
+# --- _insert_picture_summaries: layout-box positions, not text markers ---
+
+_MARKER = "**==> picture [300 x 300] intentionally omitted <==**"
+
+
+def test_insert_summary_replaces_marker_span(tmp_path):
+    """pymupdf4llm 1.27 emits a marker at the picture's span; it is
+    replaced by the summary."""
+    (tmp_path / "doc_page1_image1_summary.txt").write_text("A chart.")
+    text = "Before. \n\n" + _MARKER + "\n\nAfter. \n\n"
+    start = text.index(_MARKER)
+    boxes = [{"class": "picture", "bbox": (100, 150, 400, 450),
+              "pos": (start, start + len(_MARKER))}]
+    result = _insert_picture_summaries(text, boxes, tmp_path, "doc", 1, "_summary.txt", "utf-8")
+    assert result == "Before. \n\n[Image: A chart.]\n\nAfter. \n\n"
+
+
+def test_insert_summary_into_empty_span(tmp_path):
+    """pymupdf4llm 1.28 emits nothing for a picture; its span is just the
+    blank line where the picture sits. The summary still lands there."""
+    (tmp_path / "doc_page1_image1_summary.txt").write_text("A chart.")
+    text = "Before. \n\n\n\nAfter. \n\n"
+    # As observed from pymupdf4llm 1.28: the span is the two newlines
+    # immediately before the following text block.
+    boxes = [{"class": "picture", "bbox": (100, 150, 400, 450), "pos": (10, 12)}]
+    assert text[12:] == "After. \n\n"
+    result = _insert_picture_summaries(text, boxes, tmp_path, "doc", 1, "_summary.txt", "utf-8")
+    assert result == "Before. \n\n[Image: A chart.]\n\nAfter. \n\n"
+
+
+def test_insert_summary_drops_picture_without_summary(tmp_path):
+    text = "Before. \n\n" + _MARKER + "\n\nAfter. \n\n"
+    start = text.index(_MARKER)
+    boxes = [{"class": "picture", "bbox": (100, 150, 400, 450),
+              "pos": (start, start + len(_MARKER))}]
+    result = _insert_picture_summaries(text, boxes, tmp_path, "doc", 1, "_summary.txt", "utf-8")
+    assert result == "Before. \n\nAfter. \n\n"
+
+
+def test_insert_summary_small_pictures_do_not_consume_index(tmp_path):
+    """A sub-threshold picture is dropped and does not shift image numbering."""
+    (tmp_path / "doc_page1_image1_summary.txt").write_text("A real figure.")
+    small = "**==> picture [32 x 32] intentionally omitted <==**"
+    text = "Before. " + small + " Middle. " + _MARKER + " After."
+    s1 = text.index(small)
+    s2 = text.index(_MARKER)
+    boxes = [
+        {"class": "picture", "bbox": (10, 10, 42, 42), "pos": (s1, s1 + len(small))},
+        {"class": "picture", "bbox": (100, 150, 400, 450), "pos": (s2, s2 + len(_MARKER))},
+    ]
+    result = _insert_picture_summaries(text, boxes, tmp_path, "doc", 1, "_summary.txt", "utf-8")
+    assert result == "Before.  Middle. \n\n[Image: A real figure.]\n\n After."
+
+
+def test_insert_summary_merged_subboxes_share_one_slot(tmp_path):
+    """Two adjacent picture boxes merged into one figure get one summary,
+    at the first box's position; the other box's span is blanked."""
+    (tmp_path / "doc_page1_image1_summary.txt").write_text("One figure.")
+    text = "Before. \n\nAAAA\n\nBBBB\n\nAfter. \n\n"
+    a = text.index("AAAA"); b = text.index("BBBB")
+    boxes = [
+        {"class": "picture", "bbox": (117, 41, 289, 224), "pos": (a, a + 4)},
+        {"class": "picture", "bbox": (37, 85, 87, 200), "pos": (b, b + 4)},  # strip
+    ]
+    result = _insert_picture_summaries(text, boxes, tmp_path, "doc", 1, "_summary.txt", "utf-8")
+    assert result == "Before. \n\n[Image: One figure.]\n\nAfter. \n\n"
+    assert not (tmp_path / "doc_page1_image2_summary.txt").exists()

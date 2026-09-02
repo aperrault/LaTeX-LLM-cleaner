@@ -242,6 +242,69 @@ def test_single_column_passthrough():
     assert texts == ["Line 1", "Line 2", "Line 3"]
 
 
+def test_single_column_centered_equations_keep_order():
+    """Regression: centered display equations in a single-column paper
+    must not be split across virtual columns and reordered.
+
+    Geometry taken from Brodersen et al. (2015), page 6 at zoom=2:
+    the y_t equation is centered at exactly page_mid and the alpha
+    equation a few px left of it, so the old heuristic sent one to
+    each column and swapped them relative to their (2.1)/(2.2) labels.
+    """
+    page_width = 1224
+    lines = [
+        MockTextLine("a pair of equations", [249, 873, 431, 890]),
+        MockTextLine("EQ1", [536, 903, 688, 932]),
+        MockTextLine("(2.1)", [249, 910, 295, 930]),
+        MockTextLine("EQ2", [515, 941, 702, 967]),
+        MockTextLine("(2.2)", [249, 945, 294, 969]),
+        MockTextLine("where ...", [247, 985, 970, 1010]),
+        MockTextLine("knowns. Equation (2.1) ...", [247, 1014, 970, 1034]),
+        MockTextLine("data y_t ...", [248, 1040, 972, 1060]),
+    ]
+    result = _reorder_text_lines(lines, page_width)
+    texts = [l.text for l in result]
+    assert texts.index("EQ1") < texts.index("EQ2")
+    assert texts.index("(2.1)") < texts.index("EQ2")
+    assert texts.index("EQ2") < texts.index("(2.2)") + 1
+    assert texts[-3:] == ["where ...", "knowns. Equation (2.1) ...", "data y_t ..."]
+
+
+def test_two_column_centered_equation_is_full_width():
+    """In a two-column page, a narrow line that crosses the midline is
+    treated as full-width (flushes columns) rather than being assigned
+    to a column by its center."""
+    page_width = 1000
+    lines = [
+        MockTextLine("Left 1", [50, 100, 450, 120]),
+        MockTextLine("Right 1", [550, 100, 950, 120]),
+        MockTextLine("Left 2", [50, 130, 450, 150]),
+        MockTextLine("Right 2", [550, 130, 950, 150]),
+        MockTextLine("EQ", [420, 170, 580, 190]),  # straddles midline
+        MockTextLine("Left 3", [50, 200, 450, 220]),
+        MockTextLine("Right 3", [550, 200, 950, 220]),
+    ]
+    result = _reorder_text_lines(lines, page_width)
+    texts = [l.text for l in result]
+    assert texts == [
+        "Left 1", "Left 2", "Right 1", "Right 2", "EQ", "Left 3", "Right 3",
+    ]
+
+
+def test_two_column_gutter_grazing_line_stays_in_column():
+    """A column line that barely reaches the midline is not full-width."""
+    page_width = 1000
+    lines = [
+        MockTextLine("Left 1", [50, 100, 503, 120]),  # grazes midline
+        MockTextLine("Right 1", [550, 100, 950, 120]),
+        MockTextLine("Left 2", [50, 130, 450, 150]),
+        MockTextLine("Right 2", [550, 130, 950, 150]),
+    ]
+    result = _reorder_text_lines(lines, page_width)
+    texts = [l.text for l in result]
+    assert texts == ["Left 1", "Left 2", "Right 1", "Right 2"]
+
+
 def test_empty_input():
     assert _reorder_text_lines([], 1000) == []
 

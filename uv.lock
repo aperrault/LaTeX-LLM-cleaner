@@ -649,7 +649,7 @@ wheels = [
 
 [[package]]
 name = "latex-llm-cleaner"
-version = "0.19.0"
+version = "0.20.0"
 source = { editable = "." }
 dependencies = [
     { name = "bibtexparser" },
@@ -675,7 +675,7 @@ requires-dist = [
     { name = "bibtexparser", specifier = ">=2.0.0b7" },
     { name = "google-genai", specifier = ">=1.0.0" },
     { name = "pymupdf", marker = "extra == 'ocr'", specifier = ">=1.24.0" },
-    { name = "pymupdf4llm", specifier = ">=0.0.17" },
+    { name = "pymupdf4llm", specifier = ">=1.27.2.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "python-docx", specifier = ">=1.1.0" },
     { name = "python-pptx", specifier = ">=0.6.21" },

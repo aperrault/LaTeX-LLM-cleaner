@@ -254,9 +254,9 @@ def extract_text_from_pdf(
 ) -> str:
     """Extract text from a PDF as markdown, preserving tables and structure."""
     if verbose:
-        import fitz
+        import pymupdf
 
-        doc = fitz.open(path)
+        doc = pymupdf.open(path)
         print(f"  Extracting {doc.page_count} pages...", file=sys.stderr)
         doc.close()
 
@@ -377,7 +377,7 @@ def extract_text_from_pdf_ocr(
         )
         sys.exit(1)
 
-    import fitz
+    import pymupdf
     from PIL import Image
 
     if verbose:
@@ -387,7 +387,7 @@ def extract_text_from_pdf_ocr(
     det = DetectionPredictor()
     rec = RecognitionPredictor(foundation)
 
-    doc = fitz.open(path)
+    doc = pymupdf.open(path)
     page_count = doc.page_count
 
     if verbose:
@@ -432,7 +432,7 @@ def extract_text_from_pdf_ocr(
     images = []
     for pno in range(page_count):
         page = doc[pno]
-        mat = fitz.Matrix(zoom, zoom)
+        mat = pymupdf.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=mat)
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         images.append(img)

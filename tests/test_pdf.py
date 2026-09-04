@@ -12,9 +12,9 @@ from latex_llm_cleaner.pdf import (
 
 def _create_test_pdf(path: Path, pages: list[str]) -> None:
     """Create a simple PDF with text pages using pymupdf."""
-    import fitz
+    import pymupdf
 
-    doc = fitz.open()
+    doc = pymupdf.open()
     for text in pages:
         page = doc.new_page()
         page.insert_text((72, 72), text)
@@ -24,16 +24,16 @@ def _create_test_pdf(path: Path, pages: list[str]) -> None:
 
 def _create_pdf_with_image(path: Path) -> None:
     """Create a PDF with an embedded image on page 1."""
-    import fitz
+    import pymupdf
 
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page()
     page.insert_text((72, 72), "Text before figure.")
     # Create a 200x200 red PNG image
-    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 200), 1)
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 200, 200), 1)
     pix.set_rect(pix.irect, (255, 0, 0, 255))
     img_bytes = pix.tobytes("png")
-    rect = fitz.Rect(100, 150, 400, 450)
+    rect = pymupdf.Rect(100, 150, 400, 450)
     page.insert_image(rect, stream=img_bytes)
     page.insert_text((72, 500), "Text after figure.")
     doc.save(str(path))

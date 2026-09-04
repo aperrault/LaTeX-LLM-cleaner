@@ -321,9 +321,9 @@ skip_no_surya = pytest.mark.skipif(not HAS_SURYA, reason="surya-ocr not installe
 @skip_no_surya
 def test_ocr_extraction_basic(tmp_path):
     """Create a simple PDF and verify OCR extracts text."""
-    import fitz
+    import pymupdf
 
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page()
     page.insert_text((72, 72), "Hello World", fontsize=14)
     pdf_path = tmp_path / "test.pdf"

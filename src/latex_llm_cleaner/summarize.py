@@ -130,11 +130,11 @@ def _ensure_supported_format(image_bytes: bytes, mime_type: str) -> tuple[bytes,
         return image_bytes, mime_type
 
     if mime_type == "application/pdf":
-        import fitz
+        import pymupdf
 
         try:
-            doc = fitz.open(stream=image_bytes, filetype="pdf")
-            pix = doc[0].get_pixmap(matrix=fitz.Matrix(2, 2))
+            doc = pymupdf.open(stream=image_bytes, filetype="pdf")
+            pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(2, 2))
             png_bytes = pix.tobytes("png")
             doc.close()
             return png_bytes, "image/png"
@@ -164,6 +164,13 @@ def _call_gemini_bytes(client, image_bytes: bytes, mime_type: str, prompt: str) 
                 ]
             )
         ],
+        # No tools are passed, but google-genai >= 2.x still logs an AFC
+        # "not recommended" warning unless AFC is explicitly disabled.
+        config=types.GenerateContentConfig(
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                disable=True
+            )
+        ),
     )
     return response.text
 
@@ -366,7 +373,7 @@ def auto_summarize_pdf(path: Path, options: dict) -> None:
     Gemini for summarization, and writes {pdf_stem}_page{N}_image{M}_summary.txt
     files next to the PDF.
     """
-    import fitz
+    import pymupdf
 
     api_key = options.get("google_api_key")
     if not api_key:
@@ -382,7 +389,7 @@ def auto_summarize_pdf(path: Path, options: dict) -> None:
     base_dir = path.parent.resolve()
     pdf_stem = path.stem
 
-    doc = fitz.open(path)
+    doc = pymupdf.open(path)
     chunks = _layout_chunks(path)
 
     # Collect work items: (stem, image_bytes, mime_type, summary_path)
@@ -418,8 +425,8 @@ def auto_summarize_pdf(path: Path, options: dict) -> None:
         remaining = len(pic_boxes) - len(embedded)
         if remaining > 0 and pic_boxes:
             for box in pic_boxes[:remaining]:
-                bbox = fitz.Rect(box["bbox"])
-                mat = fitz.Matrix(2, 2)
+                bbox = pymupdf.Rect(box["bbox"])
+                mat = pymupdf.Matrix(2, 2)
                 pix = page.get_pixmap(clip=bbox, matrix=mat)
                 page_images.append((pix.tobytes("png"), "image/png"))
 
@@ -450,8 +457,8 @@ def auto_summarize_pdf(path: Path, options: dict) -> None:
                 skipped += 1
                 continue
 
-            bbox = fitz.Rect(box["bbox"])
-            mat = fitz.Matrix(2, 2)
+            bbox = pymupdf.Rect(box["bbox"])
+            mat = pymupdf.Matrix(2, 2)
             pix = page.get_pixmap(clip=bbox, matrix=mat)
             work_items.append((
                 stem, pix.tobytes("png"), "image/png",

@@ -324,14 +324,14 @@ def test_deduplicates_images(tmp_path, options):
 
 def _create_pdf_with_image(path: Path) -> None:
     """Create a PDF with an embedded 200x200 image on page 1."""
-    import fitz
+    import pymupdf
 
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page()
     page.insert_text((72, 72), "Text before figure.")
-    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 200), 1)
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 200, 200), 1)
     pix.set_rect(pix.irect, (255, 0, 0, 255))
-    page.insert_image(fitz.Rect(100, 150, 400, 450), stream=pix.tobytes("png"))
+    page.insert_image(pymupdf.Rect(100, 150, 400, 450), stream=pix.tobytes("png"))
     page.insert_text((72, 500), "Text after figure.")
     doc.save(str(path))
     doc.close()
@@ -395,10 +395,10 @@ def test_auto_summarize_pdf_skips_existing(tmp_path, pdf_options):
 
 def test_auto_summarize_pdf_skips_text_only(tmp_path, pdf_options):
     """Should not generate summaries for text-only PDFs."""
-    import fitz
+    import pymupdf
 
     pdf_path = tmp_path / "text.pdf"
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page()
     page.insert_text((72, 72), "Just text, no figures.")
     doc.save(str(pdf_path))
@@ -421,17 +421,17 @@ def test_auto_summarize_pdf_skips_text_only(tmp_path, pdf_options):
 def test_auto_summarize_pdf_dedups_identical_images(tmp_path, pdf_options):
     """Same image bytes embedded on N pages should call the API once and
     fan the result out to all N summary paths."""
-    import fitz
+    import pymupdf
 
     pdf_path = tmp_path / "doc.pdf"
-    doc = fitz.open()
-    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 200), 1)
+    doc = pymupdf.open()
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 200, 200), 1)
     pix.set_rect(pix.irect, (255, 0, 0, 255))
     img_bytes = pix.tobytes("png")
     for _ in range(3):
         page = doc.new_page()
         page.insert_text((72, 72), "Text before figure.")
-        page.insert_image(fitz.Rect(100, 150, 400, 450), stream=img_bytes)
+        page.insert_image(pymupdf.Rect(100, 150, 400, 450), stream=img_bytes)
         page.insert_text((72, 500), "Text after figure.")
     doc.save(str(pdf_path))
     doc.close()

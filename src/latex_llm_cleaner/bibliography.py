@@ -173,16 +173,34 @@ def _find_bib_files(content: str, base_dir: Path, search_dirs: list[Path] | None
 def _parse_bib_file(bib_path: Path, encoding: str) -> dict[str, dict]:
     """Parse a .bib file and return a dict of key -> entry."""
     bib_text = bib_path.read_text(encoding=encoding)
-    library = bibtexparser.parse_string(bib_text)
 
     entries = {}
-    for entry in library.entries:
-        key = entry.key
-        entries[key] = {
-            "type": entry.entry_type,
-            "fields": {k: f.value for k, f in entry.fields_dict.items()},
-            "key": key,
-        }
+    if hasattr(bibtexparser, "parse_string"):
+        # bibtexparser 2.x (still beta on PyPI)
+        library = bibtexparser.parse_string(bib_text)
+        for entry in library.entries:
+            entries[entry.key] = {
+                "type": entry.entry_type,
+                "fields": {k: f.value for k, f in entry.fields_dict.items()},
+                "key": entry.key,
+            }
+    else:
+        # bibtexparser 1.x: entries are plain dicts with ID/ENTRYTYPE keys.
+        # The default parser silently drops non-standard entry types
+        # (@online, @software, ...), so disable that.
+        from bibtexparser.bparser import BibTexParser
+
+        parser = BibTexParser(common_strings=True, ignore_nonstandard_types=False)
+        library = bibtexparser.loads(bib_text, parser=parser)
+        for entry in library.entries:
+            key = entry["ID"]
+            entries[key] = {
+                "type": entry["ENTRYTYPE"],
+                "fields": {
+                    k: v for k, v in entry.items() if k not in ("ID", "ENTRYTYPE")
+                },
+                "key": key,
+            }
     return entries
 
 

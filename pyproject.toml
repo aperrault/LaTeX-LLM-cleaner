@@ -1,6 +1,6 @@
 [project]
 name = "latex-llm-cleaner"
-version = "0.20.1"
+version = "0.20.2"
 description = "Flatten and clean LaTeX, PDF, PPTX, and DOCX files for LLM consumption"
 license = "MIT"
 requires-python = ">=3.10"
@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Text Processing :: Markup :: LaTeX",
 ]
 dependencies = [
-    "bibtexparser>=2.0.0b7",
+    "bibtexparser>=1.4",
     "google-genai>=1.0.0",
     "pymupdf4llm>=1.27.2.2",
     "python-docx>=1.1.0",

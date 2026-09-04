@@ -57,17 +57,20 @@ pip install 'latex-llm-cleaner[ocr]'
 
 ```bash
 # Recommended:
-uv tool install --prerelease=allow latex-llm-cleaner
-uv tool install --prerelease=allow 'latex-llm-cleaner[ocr]'
+uv tool install latex-llm-cleaner
+uv tool install --python 3.13 'latex-llm-cleaner[ocr]'   # with OCR
 
 # Alternative (pipx):
 pipx install latex-llm-cleaner
 pipx inject latex-llm-cleaner surya-ocr 'transformers<5'   # for OCR
 ```
 
-> **Note:** `--prerelease=allow` is needed because bibtexparser v2 is still in beta. `pip install` handles this automatically.
+> **Note:** Quote `'latex-llm-cleaner[ocr]'` — zsh otherwise treats the brackets as a glob pattern.
+> The `--python 3.13` flag matters because OCR does not yet work on Python 3.14.
 
 > **Note:** OCR requires `libjpeg` headers. On macOS: `brew install jpeg`
+
+> **Upgrading:** `uv tool upgrade latex-llm-cleaner`. If uv reports the tool is pinned, re-run the install command above with `--force`.
 
 ### From source
 

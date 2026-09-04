@@ -369,10 +369,14 @@ def extract_text_from_pdf_ocr(
         from surya.recognition import FoundationPredictor, RecognitionPredictor
     except ImportError:
         print(
-            "Error: OCR support requires surya-ocr.\n"
-            "Install with: pip install 'latex-llm-cleaner[ocr]'\n"
-            "Or globally:  uv tool install 'latex-llm-cleaner[ocr]'\n"
-            "Note: requires Python ≤ 3.13 and libjpeg (brew install jpeg on macOS).",
+            "Error: --ocr requires the optional surya-ocr dependency, which is "
+            "not installed in this environment.\n"
+            "  pip:  pip install 'latex-llm-cleaner[ocr]'\n"
+            "  uv:   uv tool install --force --python 3.13 'latex-llm-cleaner[ocr]'\n"
+            "  pipx: pipx inject latex-llm-cleaner surya-ocr 'transformers<5'\n"
+            "Quote the [ocr] part, or zsh treats the brackets as a glob.\n"
+            "OCR needs Python 3.13 or older, and libjpeg headers "
+            "(brew install jpeg on macOS).",
             file=sys.stderr,
         )
         sys.exit(1)

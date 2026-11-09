@@ -13,8 +13,6 @@ def test_full_pipeline():
         "flatten": True,
         "comments": True,
         "bibliography": True,
-        "figures": True,
-        "figure_summary_suffix": "_summary.txt",
         "encoding": "utf-8",
         "verbose": False,
     }
@@ -39,12 +37,9 @@ def test_full_pipeline():
     assert "\\bibliography{refs}" not in result
     assert "\\bibliographystyle{" not in result
 
-    # Figure substituted
-    assert "% --- Figure summary ---" in result
-    assert "bar chart" in result
+    # Figures pass through untouched: the path points the reader at the file
+    assert "\\includegraphics[width=0.8\\textwidth]{figs/result.png}" in result
     assert "\\label{fig:result}" in result
-    assert "% Caption: Main results" in result
-    assert "\\includegraphics" not in result
 
 
 def test_all_disabled():
@@ -54,8 +49,6 @@ def test_all_disabled():
         "comments": False,
         "macros": False,
         "bibliography": False,
-        "figures": False,
-        "figure_summary_suffix": "_summary.txt",
         "encoding": "utf-8",
         "verbose": False,
     }

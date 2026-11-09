@@ -1,6 +1,13 @@
-"""Extract text from PPTX files for LLM consumption."""
+"""Extract text from PPTX files for LLM consumption.
 
-import sys
+Equations (OMML) become LaTeX. Text boxes that hold equations sit inside
+mc:AlternateContent, which python-pptx does not expose as shapes; readers
+built only on python-pptx silently drop those boxes, so they are walked here
+directly. Pictures become an "[Image]" placeholder (with the alt text when the
+deck has one): to see a picture, render that slide.
+"""
+
+import re
 from pathlib import Path
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -9,6 +16,9 @@ _OMML_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 _MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 _DML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _PML_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+_FILENAME_RE = re.compile(
+    r"[^\n]{0,200}\.(png|jpe?g|gif|bmp|tiff?|emf|wmf|svg|pdf)", re.IGNORECASE
+)
 
 
 def shape_has_embedded_image(shape) -> bool:
@@ -29,29 +39,17 @@ def extract_text_from_pptx(
     path: Path,
     verbose: bool = False,
     notes: bool = False,
-    figure_summary_suffix: str = "_summary.txt",
-    encoding: str = "utf-8",
 ) -> str:
     """Extract text from a PPTX as markdown."""
     prs = Presentation(str(path))
-    base_dir = path.parent.resolve()
-    pptx_stem = path.stem
-    slides_md = []
-
-    for slide_num, slide in enumerate(prs.slides, start=1):
-        md = _slide_to_markdown(
-            slide, slide_num, notes, figure_summary_suffix, base_dir, encoding,
-            verbose, pptx_stem,
-        )
-        slides_md.append(md)
-
+    slides_md = [
+        _slide_to_markdown(slide, slide_num, notes)
+        for slide_num, slide in enumerate(prs.slides, start=1)
+    ]
     return "\n\n---\n\n".join(slides_md) + "\n"
 
 
-def _slide_to_markdown(
-    slide, slide_num, notes, figure_summary_suffix, base_dir, encoding, verbose,
-    pptx_stem,
-):
+def _slide_to_markdown(slide, slide_num, notes):
     """Convert a single slide to markdown."""
     # Title
     title_shape = slide.shapes.title
@@ -76,14 +74,10 @@ def _slide_to_markdown(
             exposed_ids.add(cNvPr.get("id"))
 
     # Collect shapes (skip the title shape since we already used it)
-    image_counter = 0
     for shape in slide.shapes:
         if shape == title_shape:
             continue
-        text, image_counter = _shape_to_text(
-            shape, slide_num, image_counter, base_dir,
-            figure_summary_suffix, encoding, verbose, pptx_stem,
-        )
+        text = _shape_to_text(shape)
         if text:
             parts.append(text)
 
@@ -113,54 +107,34 @@ def _slide_to_markdown(
     return "\n\n".join(parts)
 
 
-def _shape_to_text(shape, slide_num, image_counter, base_dir,
-                   figure_summary_suffix, encoding, verbose, pptx_stem):
-    """Convert a shape to text. Returns (text, updated_image_counter)."""
+def _shape_to_text(shape):
+    """Convert a shape to text (None if it has none)."""
     # Group shape — recurse
     if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
-        group_parts = []
-        for child in shape.shapes:
-            text, image_counter = _shape_to_text(
-                child, slide_num, image_counter, base_dir,
-                figure_summary_suffix, encoding, verbose, pptx_stem,
-            )
-            if text:
-                group_parts.append(text)
-        return "\n\n".join(group_parts), image_counter
+        group_parts = [t for t in map(_shape_to_text, shape.shapes) if t]
+        return "\n\n".join(group_parts)
 
     # Table
     if shape.has_table:
-        return _table_to_markdown(shape.table), image_counter
+        return _table_to_markdown(shape.table)
 
     # Picture / image (including placeholders with embedded images)
     if shape.shape_type == MSO_SHAPE_TYPE.PICTURE or (
         shape.shape_type == MSO_SHAPE_TYPE.PLACEHOLDER
         and shape_has_embedded_image(shape)
     ):
-        image_counter += 1
-        summary = _find_image_summary(
-            base_dir, pptx_stem, slide_num, image_counter,
-            figure_summary_suffix, encoding,
-        )
-        if summary:
-            return f"[Image: {summary}]", image_counter
-        if verbose:
-            print(
-                f"Warning: no summary found for {pptx_stem}_slide{slide_num}_image{image_counter}",
-                file=sys.stderr,
-            )
-        return "[Image]", image_counter
+        cNvPr = shape._element.find(f".//{{{_PML_NS}}}cNvPr")
+        alt = (cNvPr.get("descr") or "").strip() if cNvPr is not None else ""
+        if _FILENAME_RE.fullmatch(alt):  # default alt text is often the file name
+            alt = ""
+        return f"[Image: {alt}]" if alt else "[Image]"
 
     # Text frame
     if shape.has_text_frame:
-        paragraphs = []
-        for para in shape.text_frame.paragraphs:
-            text = _process_paragraph(para)
-            if text:
-                paragraphs.append(text)
-        return "\n\n".join(paragraphs), image_counter
+        paragraphs = [t for t in map(_process_paragraph, shape.text_frame.paragraphs) if t]
+        return "\n\n".join(paragraphs)
 
-    return None, image_counter
+    return None
 
 
 def _extract_text_from_sp_element(sp):
@@ -226,12 +200,3 @@ def _table_to_markdown(table):
     rows.insert(1, separator)
 
     return "\n".join(rows)
-
-
-def _find_image_summary(base_dir, pptx_stem, slide_num, image_index, suffix, encoding):
-    """Look for {pptx_stem}_slide{N}_image{M}{suffix} in base_dir."""
-    stem = f"{pptx_stem}_slide{slide_num}_image{image_index}"
-    summary_path = base_dir / (stem + suffix)
-    if summary_path.is_file():
-        return summary_path.read_text(encoding=encoding).strip()
-    return None

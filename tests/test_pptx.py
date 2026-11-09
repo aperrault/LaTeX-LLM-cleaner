@@ -128,24 +128,26 @@ def test_table_extraction(tmp_path):
     assert "| Bob | 87 |" in result
 
 
-def test_image_summary_lookup(tmp_path):
-    """Image with a matching summary file should be replaced."""
+def test_image_alt_text(tmp_path):
+    """A picture with alt text becomes [Image: <alt text>]."""
     img_path = tmp_path / "tiny.png"
     _create_tiny_png(img_path)
-
-    summary_path = tmp_path / "test_slide1_image1_summary.txt"
-    summary_path.write_text("A bar chart showing results.")
 
     pptx_path = tmp_path / "test.pptx"
     _create_test_pptx(pptx_path, [
         {"title": "Results", "image_path": img_path}
     ])
+    prs = Presentation(str(pptx_path))
+    pic = [s for s in prs.slides[0].shapes if s.shape_type == 13][0]  # PICTURE
+    pic._element.nvPicPr.cNvPr.set("descr", "Bar chart of results")
+    prs.save(str(pptx_path))
+
     result = extract_text_from_pptx(pptx_path)
-    assert "[Image: A bar chart showing results.]" in result
+    assert "[Image: Bar chart of results]" in result
 
 
-def test_image_no_summary(tmp_path):
-    """Image without summary should produce [Image] placeholder."""
+def test_image_placeholder(tmp_path):
+    """A picture without alt text becomes a bare [Image] placeholder."""
     img_path = tmp_path / "tiny.png"
     _create_tiny_png(img_path)
 

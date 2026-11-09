@@ -1,202 +1,72 @@
 # LaTeX LLM Cleaner
 
-A CLI tool that converts LaTeX `.tex`, compiled `.pdf`, PowerPoint `.pptx`, and Word `.docx` files into clean text for feeding to language models.
+A CLI tool that turns a LaTeX project or a PowerPoint deck into one clean text file for a language model to read.
 
-## Why this matters
+- **LaTeX:** inlines every `\input`/`\include`, strips comments, expands idiosyncratic macros, and inlines the bibliography, so the model sees one self-contained document instead of a directory of fragments and private shorthand.
+- **PowerPoint:** extracts each slide's text, tables and notes, with equations converted from Office MathML to LaTeX. Readers built only on `python-pptx` silently drop every text box that contains an equation, because those boxes sit inside `mc:AlternateContent`; this tool reads them.
 
-Documents weren't designed to be read by language models. Each format loses information in its own way when you extract text from it:
+## What happened to PDF and Word input (1.0)
 
-- **PDF** is the worst case. It's a *display* format — it stores glyph positions, not semantic content. Math fonts often use character codes that don't match their visual appearance. Tables have no structure; extractors guess cell boundaries from character positions. Figures are typically ignored entirely.
-- **PPTX/DOCX** store equations as Office MathML — verbose XML that models struggle to interpret correctly.
-- **LaTeX** source may be split across dozens of `\input` files, full of custom macros, with figures as opaque file paths.
+Versions before 1.0 also converted PDFs (with optional Surya OCR) and DOCX files, and could describe figures with the Gemini API. Each of those now has a better answer:
 
-In all cases, the model receives something different from what the author wrote, and neither the model nor the user can tell.
-
-Here's what a standard text extractor produces from a page of a compiled paper (PDF):
-
-```
-qA =ω+(ε → ω)x , qB =ω(1 → x )
- 1          1   1       1
-
-Pg = 1/2 for all i, g
- i
-
-dϖ   1  dPA       1  dPB
- 1 =   1 (ε → ω)+   1 ( → ω)
-dx   2 · dqA ·     2 · dqB ·
- 1        1             1
-```
-
-Minus signs become arrows. Subscripts and superscripts scatter across lines. Greek letters map to wrong Unicode points. The model reads this confidently and reasons from it.
-
-The same page with `latex-llm-cleaner --ocr`:
-
-```
-$q_1^A = \beta + (\alpha - \beta)x_1, \qquad q_1^B = \beta(1 - x_1)$
-
-$P_i^g = 1/2$ for all $i, g$
-
-$$\frac{d\pi_1}{dx_1}\bigg|_{x_1=x_2=0} = \frac{1}{2} \cdot \frac{dP_1^A}{dq_1^A} \cdot (\alpha - \beta) + \frac{1}{2} \cdot \frac{dP_1^B}{dq_1^B} \cdot (-\beta)$$
-```
-
-None of these formats were built for the document-to-model pipeline. Until one is, this tool bridges the gap: OCR for math, vision-based summarization for figures and tables, OMML-to-LaTeX conversion, and structured markdown output.
+| Input | Use instead |
+|---|---|
+| Short PDF (≲ 20 pages) | Give it to the model directly. Current models read rendered page images, math included. |
+| Long PDF | [Marker](https://github.com/datalab-to/marker) on a GPU: `marker_single paper.pdf --force_ocr --paginate_output`. On a 15-paper test battery it beat this tool's OCR on equations, two-column reading order, tables and figure captions. |
+| `.docx` | `pandoc -t markdown file.docx` (equations come out as LaTeX). |
+| Figure descriptions | Not needed: models can look at the figure (the file, or the rendered page) themselves. |
 
 ## Installation
 
 ```bash
-pip install latex-llm-cleaner
+uv tool install latex-llm-cleaner     # or: pipx install latex-llm-cleaner
 ```
 
-For OCR-based equation recovery from PDFs (requires Python ≤ 3.13):
-
-```bash
-pip install 'latex-llm-cleaner[ocr]'
-```
-
-### Global install
-
-```bash
-# Recommended:
-uv tool install latex-llm-cleaner
-uv tool install --python 3.13 'latex-llm-cleaner[ocr]'   # with OCR
-
-# Alternative (pipx):
-pipx install latex-llm-cleaner
-pipx inject latex-llm-cleaner surya-ocr 'transformers<5'   # for OCR
-```
-
-> **Note:** Quote `'latex-llm-cleaner[ocr]'` — zsh otherwise treats the brackets as a glob pattern.
-> The `--python 3.13` flag matters because OCR does not yet work on Python 3.14.
-
-> **Note:** OCR requires `libjpeg` headers. On macOS: `brew install jpeg`
-
-> **Upgrading:** `uv tool upgrade latex-llm-cleaner`. If uv reports the tool is pinned, re-run the install command above with `--force`.
-
-### From source
-
-```bash
-pip install -e ".[dev]"
-```
+Upgrading from 0.x: `uv tool install --force latex-llm-cleaner` (the old `[ocr]` extra no longer exists).
 
 ## Usage
 
 ```bash
-latex-llm-cleaner paper.tex                       # output to stdout
-latex-llm-cleaner paper.tex -o cleaned.tex        # output to file
-latex-llm-cleaner paper.tex --no-bibliography     # skip bib inlining
-latex-llm-cleaner thesis.pdf -o thesis.md          # extract text from PDF
-latex-llm-cleaner thesis.pdf --ocr -o thesis.md   # OCR with LaTeX equation recovery
-latex-llm-cleaner slides.pptx -o slides.md         # extract slides from PPTX
+latex-llm-cleaner paper.tex                        # cleaned LaTeX to stdout
+latex-llm-cleaner paper.tex -o cleaned.tex         # to a file
+latex-llm-cleaner paper.tex --no-bibliography      # skip bibliography inlining
+latex-llm-cleaner slides.pptx -o slides.md         # slides as markdown
 latex-llm-cleaner slides.pptx --notes -o slides.md # include speaker notes
-latex-llm-cleaner report.docx -o report.md         # extract text from Word doc
-latex-llm-cleaner report.docx --notes -o report.md # include Word comments
-latex-llm-cleaner paper.tex --auto-summarize       # generate figure summaries via Gemini
 ```
 
-All features are **on by default**. Disable individual steps with `--no-*` flags:
+All steps are on by default; disable them individually:
 
 ```
 latex-llm-cleaner INPUT_FILE [options]
 
-Options:
-  -o, --output FILE          Write to FILE (default: stdout)
-  --no-flatten               Disable \input/\include flattening
-  --no-comments              Disable comment removal
-  --no-macros                Disable macro expansion
-  --keep-usepackage          Keep \usepackage lines (dropped by default)
-  --no-bibliography          Disable bibliography inlining
-  --no-figures               Disable figure summary substitution
-  --figure-summary-suffix S  Suffix for summary files (default: _summary.txt)
-  --notes                    Include speaker notes (PPTX) or comments (DOCX)
-  --ocr                      Use Surya vision OCR for PDFs (recovers LaTeX equations, slower)
-  --auto-summarize           Generate figure summaries via Gemini vision API
-  --google-api-key KEY       API key for --auto-summarize (default: GOOGLE_API_KEY env var)
-  --encoding ENC             File encoding (default: utf-8)
-  -v, --verbose              Print processing info to stderr
+  -o, --output FILE     Write to FILE (default: stdout)
+  --no-flatten          Disable \input/\include flattening
+  --no-comments         Disable comment removal
+  --no-macros           Disable macro expansion
+  --keep-usepackage     Keep \usepackage lines (dropped by default)
+  --no-bibliography     Disable bibliography inlining
+  --notes               Include speaker notes (PPTX)
+  --encoding ENC        File encoding (default: utf-8)
+  -v, --verbose         Print processing info to stderr
 ```
 
-## PDF Input
+## LaTeX pipeline
 
-Extracts text as markdown, preserving table structure. Tables become markdown pipe-tables. Images become `[picture omitted]` placeholders (or text summaries if summary files exist).
+Four steps, in order:
 
-The `.tex` pipeline flags (`--no-flatten`, etc.) are ignored for PDF input.
+1. **Flatten includes:** inline `\input{}`, `\include{}` and `\subfile{}` recursively, resolved from the main file's directory, with cycle detection.
+2. **Remove comments:** strip `%` comments, respecting `\%` escapes and verbatim environments.
+3. **Expand macros:** substitute `\newcommand`, `\renewcommand`, `\def` and `\DeclareMathOperator` where the expansion reads better than the name (`\Secref{x}` → `Section~\ref{x}`, `\train` → `\mathcal{D}`); leave self-documenting names like `\norm` alone and just drop their definitions. Pure-rendering preamble (`\usetikzlibrary`, `\definecolor`, `\newtheorem`, …) and `\usepackage` lines are removed (`--keep-usepackage` keeps the latter). Handles 0–9 arguments, optional arguments with defaults, and nested macros.
+4. **Inline bibliography:** use the `.bbl` if present, otherwise parse the `.bib`, and replace `\bibliography{}` with a `thebibliography` block.
 
-### OCR mode
+Figures are left as `\includegraphics{path}`: the path tells the reader which file to open.
 
-The default extraction is fast but loses display equations. The `--ocr` flag uses [Surya](https://github.com/VikParuchuri/surya) vision OCR to recover them as LaTeX (`$...$` and `$$...$$`). Slower (~30s/page on Apple Silicon). Requires Python ≤ 3.13.
+## PowerPoint output
 
-```bash
-pip install 'latex-llm-cleaner[ocr]'
-latex-llm-cleaner thesis.pdf --ocr -o thesis.md
-```
-
-## PPTX Input
-
-Each slide becomes a markdown section (`# Slide N: Title`), separated by `---`. Tables are output as pipe-tables. Images become `[Image]` placeholders unless a summary file exists.
-
-Speaker notes are excluded by default; use `--notes` to include them.
-
-OMML equations in the presentation are converted to LaTeX.
-
-### Image summaries for PPTX
-
-Place summary files next to the `.pptx` using this naming convention:
-
-```
-slides.pptx
-slides_slide1_image1_summary.txt
-slides_slide3_image2_summary.txt
-```
-
-## DOCX Input
-
-Extracts headings, tables (as pipe-tables), bold/italic formatting, and images (with summaries or `[Image]` placeholders). OMML equations are converted to LaTeX.
-
-Use `--notes` to include Word comments (rendered as blockquotes with author attribution).
-
-## Auto-Summarize
-
-The `--auto-summarize` flag generates text descriptions of figures using the Gemini vision API, so you don't have to write summary files by hand. Works with PDF, PPTX, DOCX, and LaTeX input.
-
-Requires a Google API key:
-
-```bash
-export GOOGLE_API_KEY=your-key
-latex-llm-cleaner paper.tex --auto-summarize -o cleaned.tex
-```
-
-Summaries are written as `_summary.txt` files next to each figure. On subsequent runs, existing summaries are reused. The goal is data-equivalent descriptions: what you'd learn from looking at the figure, nothing more.
-
-## Processing Pipeline (.tex files)
-
-Five steps, in order (each operates on the output of the previous):
-
-1. **Flatten includes** — inline `\input{}`, `\include{}`, and `\subfile{}` recursively, with cycle detection
-2. **Remove comments** — strip `%` comments while respecting `\%` escapes and verbatim environments
-3. **Expand macros** — substitute `\newcommand`, `\renewcommand`, `\def`, `\DeclareMathOperator` inline. Handles 0–9 arguments, optional arguments with defaults, and nested macros via multi-pass expansion. Also strips `\usepackage` lines (use `--keep-usepackage` to retain).
-4. **Inline bibliography** — use a `.bbl` file if available, otherwise parse `.bib`; replaces `\bibliography{}` with a `\begin{thebibliography}` block
-5. **Figure summary substitution** — replace `\includegraphics` with text descriptions from summary files
-
-## Figure Summaries
-
-For each image (e.g., `figs/plot.png`), place a summary file alongside it:
-
-```
-figs/plot.png              ← the image
-figs/plot_summary.txt      ← the text summary
-```
-
-A summary should be **data-equivalent** to the figure: the same information a reader would get from looking at it, nothing more.
-
-Good example:
-> Bar chart with four groups (A, B, C, D). Method X scores 0.92, 0.87, 0.76, 0.81. Method Y scores 0.85, 0.91, 0.80, 0.74. Error bars show standard deviation across 5 runs.
-
-Bad example:
-> This figure clearly demonstrates the superiority of Method X, which aligns with our hypothesis.
+Each slide becomes `# Slide N: Title`, separated by `---`. Tables become pipe tables, equations become `$...$` LaTeX, and pictures become `[Image]` (with the picture's alt text when it has some). Speaker notes are excluded unless `--notes` is given.
 
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-pytest
+uv run pytest
 ```

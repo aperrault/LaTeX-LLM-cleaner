@@ -1,14 +1,14 @@
 [project]
 name = "latex-llm-cleaner"
-version = "0.20.2"
-description = "Flatten and clean LaTeX, PDF, PPTX, and DOCX files for LLM consumption"
+version = "1.0.0"
+description = "Flatten and clean LaTeX projects, and extract PowerPoint decks with their equations, for LLM consumption"
 license = "MIT"
 requires-python = ">=3.10"
 readme = "README.md"
 authors = [
     { name = "Andrew Perrault", email = "aperrau@gmail.com" },
 ]
-keywords = ["latex", "llm", "arxiv", "flatten", "clean", "bibliography", "pptx", "powerpoint", "docx", "word"]
+keywords = ["latex", "llm", "arxiv", "flatten", "clean", "bibliography", "macros", "pptx", "powerpoint", "omml", "equations"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -22,9 +22,6 @@ classifiers = [
 ]
 dependencies = [
     "bibtexparser>=1.4",
-    "google-genai>=1.0.0",
-    "pymupdf4llm>=1.27.2.2",
-    "python-docx>=1.1.0",
     "python-pptx>=0.6.21",
 ]
 
@@ -33,8 +30,7 @@ Homepage = "https://github.com/aperrault/LaTeX-LLM-cleaner"
 Repository = "https://github.com/aperrault/LaTeX-LLM-cleaner"
 Issues = "https://github.com/aperrault/LaTeX-LLM-cleaner/issues"
 
-[project.optional-dependencies]
-ocr = ["surya-ocr>=0.17.0", "pymupdf>=1.24.0", "transformers<5", "requests"]
+[dependency-groups]
 dev = ["pytest>=7.0"]
 
 [project.scripts]

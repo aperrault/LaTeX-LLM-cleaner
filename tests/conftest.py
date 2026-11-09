@@ -18,8 +18,6 @@ def default_options():
         "comments": True,
         "macros": True,
         "bibliography": True,
-        "figures": True,
-        "figure_summary_suffix": "_summary.txt",
         "encoding": "utf-8",
         "verbose": False,
     }

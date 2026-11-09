@@ -1,3 +1,8 @@
-"""LaTeX LLM Cleaner — flatten and clean LaTeX for LLM consumption."""
+"""LaTeX LLM Cleaner — flatten and clean LaTeX (and PPTX) for LLM consumption."""
 
-__version__ = "0.11.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("latex-llm-cleaner")
+except PackageNotFoundError:  # running from a source tree without install
+    __version__ = "unknown"
